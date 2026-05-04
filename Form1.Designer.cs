@@ -14,6 +14,7 @@ partial class Form1
     private Label deviceHintLabel;
     private ListView deviceListView;
     private ColumnHeader deviceNameColumn;
+    private ColumnHeader deviceConnectedColumn;
     private ColumnHeader deviceBatteryColumn;
     private ColumnHeader deviceSignalColumn;
     private ColumnHeader deviceSeenColumn;
@@ -34,6 +35,8 @@ partial class Form1
     private TableLayoutPanel metaGrid;
     private Label statusLabel;
     private Label statusValueLabel;
+    private Label connectedLabel;
+    private Label connectedValueLabel;
     private Label signalLabel;
     private Label signalValueLabel;
     private Label addressLabel;
@@ -49,6 +52,7 @@ partial class Form1
     {
         if (disposing && (components != null))
         {
+            connectedRefreshTimer.Dispose();
             scanner.Dispose();
             components.Dispose();
         }
@@ -70,6 +74,7 @@ partial class Form1
         deviceHintLabel = new Label();
         deviceListView = new ListView();
         deviceNameColumn = new ColumnHeader();
+        deviceConnectedColumn = new ColumnHeader();
         deviceBatteryColumn = new ColumnHeader();
         deviceSignalColumn = new ColumnHeader();
         deviceSeenColumn = new ColumnHeader();
@@ -90,6 +95,8 @@ partial class Form1
         metaGrid = new TableLayoutPanel();
         statusLabel = new Label();
         statusValueLabel = new Label();
+        connectedLabel = new Label();
+        connectedValueLabel = new Label();
         signalLabel = new Label();
         signalValueLabel = new Label();
         addressLabel = new Label();
@@ -125,7 +132,7 @@ partial class Form1
         rootLayout.RowCount = 2;
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 74F));
         rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-        rootLayout.Size = new Size(884, 506);
+        rootLayout.Size = new Size(1064, 526);
         rootLayout.TabIndex = 0;
         headerPanel.Controls.Add(titleLabel);
         headerPanel.Controls.Add(subtitleLabel);
@@ -134,7 +141,7 @@ partial class Form1
         headerPanel.Location = new Point(0, 0);
         headerPanel.Margin = new Padding(0, 0, 0, 14);
         headerPanel.Name = "headerPanel";
-        headerPanel.Size = new Size(884, 60);
+        headerPanel.Size = new Size(1064, 60);
         headerPanel.TabIndex = 0;
         titleLabel.AutoSize = true;
         titleLabel.Font = new Font("Segoe UI", 22F, FontStyle.Bold);
@@ -156,7 +163,7 @@ partial class Form1
         refreshButton.FlatStyle = FlatStyle.Flat;
         refreshButton.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
         refreshButton.ForeColor = Color.White;
-        refreshButton.Location = new Point(754, 10);
+        refreshButton.Location = new Point(934, 10);
         refreshButton.Name = "refreshButton";
         refreshButton.Size = new Size(128, 38);
         refreshButton.TabIndex = 2;
@@ -169,11 +176,11 @@ partial class Form1
         mainSplit.Margin = new Padding(0);
         mainSplit.Name = "mainSplit";
         mainSplit.Panel1.Controls.Add(devicesPanel);
-        mainSplit.Panel1MinSize = 390;
+        mainSplit.Panel1MinSize = 560;
         mainSplit.Panel2.Controls.Add(detailPanel);
-        mainSplit.Panel2MinSize = 420;
-        mainSplit.Size = new Size(884, 432);
-        mainSplit.SplitterDistance = 410;
+        mainSplit.Panel2MinSize = 450;
+        mainSplit.Size = new Size(1064, 452);
+        mainSplit.SplitterDistance = 580;
         mainSplit.SplitterWidth = 10;
         mainSplit.TabIndex = 1;
         devicesPanel.BackColor = Color.FromArgb(247, 248, 250);
@@ -184,7 +191,7 @@ partial class Form1
         devicesPanel.Location = new Point(0, 0);
         devicesPanel.Name = "devicesPanel";
         devicesPanel.Padding = new Padding(14);
-        devicesPanel.Size = new Size(410, 432);
+        devicesPanel.Size = new Size(580, 452);
         devicesPanel.TabIndex = 0;
         devicesTitleLabel.AutoSize = true;
         devicesTitleLabel.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
@@ -198,12 +205,12 @@ partial class Form1
         deviceHintLabel.ForeColor = Color.FromArgb(90, 98, 110);
         deviceHintLabel.Location = new Point(17, 39);
         deviceHintLabel.Name = "deviceHintLabel";
-        deviceHintLabel.Size = new Size(376, 22);
+        deviceHintLabel.Size = new Size(546, 22);
         deviceHintLabel.TabIndex = 1;
         deviceHintLabel.Text = "Open AirPods case near PC.";
         deviceListView.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         deviceListView.BorderStyle = BorderStyle.None;
-        deviceListView.Columns.AddRange(new ColumnHeader[] { deviceNameColumn, deviceBatteryColumn, deviceSignalColumn, deviceSeenColumn, deviceAddressColumn });
+        deviceListView.Columns.AddRange(new ColumnHeader[] { deviceNameColumn, deviceConnectedColumn, deviceBatteryColumn, deviceSignalColumn, deviceSeenColumn, deviceAddressColumn });
         deviceListView.FullRowSelect = true;
         deviceListView.GridLines = true;
         deviceListView.HeaderStyle = ColumnHeaderStyle.Nonclickable;
@@ -211,13 +218,15 @@ partial class Form1
         deviceListView.Location = new Point(14, 68);
         deviceListView.MultiSelect = false;
         deviceListView.Name = "deviceListView";
-        deviceListView.Size = new Size(382, 350);
+        deviceListView.Size = new Size(552, 370);
         deviceListView.TabIndex = 2;
         deviceListView.UseCompatibleStateImageBehavior = false;
         deviceListView.View = View.Details;
         deviceListView.SelectedIndexChanged += deviceListView_SelectedIndexChanged;
         deviceNameColumn.Text = "Name";
-        deviceNameColumn.Width = 118;
+        deviceNameColumn.Width = 112;
+        deviceConnectedColumn.Text = "Windows";
+        deviceConnectedColumn.Width = 92;
         deviceBatteryColumn.Text = "Battery";
         deviceBatteryColumn.Width = 128;
         deviceSignalColumn.Text = "Signal";
@@ -236,7 +245,7 @@ partial class Form1
         detailPanel.Location = new Point(0, 0);
         detailPanel.Name = "detailPanel";
         detailPanel.Padding = new Padding(20);
-        detailPanel.Size = new Size(464, 432);
+        detailPanel.Size = new Size(474, 452);
         detailPanel.TabIndex = 0;
         modelLabel.AutoSize = true;
         modelLabel.ForeColor = Color.FromArgb(90, 98, 110);
@@ -324,19 +333,22 @@ partial class Form1
         metaGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         metaGrid.Controls.Add(statusLabel, 0, 0);
         metaGrid.Controls.Add(statusValueLabel, 1, 0);
-        metaGrid.Controls.Add(signalLabel, 0, 1);
-        metaGrid.Controls.Add(signalValueLabel, 1, 1);
-        metaGrid.Controls.Add(addressLabel, 0, 2);
-        metaGrid.Controls.Add(addressValueLabel, 1, 2);
+        metaGrid.Controls.Add(connectedLabel, 0, 1);
+        metaGrid.Controls.Add(connectedValueLabel, 1, 1);
+        metaGrid.Controls.Add(signalLabel, 0, 2);
+        metaGrid.Controls.Add(signalValueLabel, 1, 2);
+        metaGrid.Controls.Add(addressLabel, 0, 3);
+        metaGrid.Controls.Add(addressValueLabel, 1, 3);
         metaGrid.Location = new Point(20, 224);
         metaGrid.Name = "metaGrid";
-        metaGrid.RowCount = 3;
+        metaGrid.RowCount = 4;
         metaGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
         metaGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
         metaGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
-        metaGrid.Size = new Size(424, 90);
+        metaGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+        metaGrid.Size = new Size(424, 120);
         metaGrid.TabIndex = 3;
-        foreach (var label in new[] { statusLabel, signalLabel, addressLabel })
+        foreach (var label in new[] { statusLabel, connectedLabel, signalLabel, addressLabel })
         {
             label.Dock = DockStyle.Fill;
             label.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
@@ -344,9 +356,10 @@ partial class Form1
             label.TextAlign = ContentAlignment.MiddleLeft;
         }
         statusLabel.Text = "Status";
+        connectedLabel.Text = "Windows";
         signalLabel.Text = "Signal";
         addressLabel.Text = "Address";
-        foreach (var label in new[] { statusValueLabel, signalValueLabel, addressValueLabel })
+        foreach (var label in new[] { statusValueLabel, connectedValueLabel, signalValueLabel, addressValueLabel })
         {
             label.AutoEllipsis = true;
             label.Dock = DockStyle.Fill;
@@ -355,12 +368,14 @@ partial class Form1
         rawValueBox.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         rawValueBox.BackColor = Color.FromArgb(250, 251, 252);
         rawValueBox.BorderStyle = BorderStyle.FixedSingle;
-        rawValueBox.Location = new Point(20, 332);
+        connectedValueLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        connectedValueLabel.ForeColor = Color.FromArgb(10, 92, 190);
+        rawValueBox.Location = new Point(20, 356);
         rawValueBox.Multiline = true;
         rawValueBox.Name = "rawValueBox";
         rawValueBox.ReadOnly = true;
         rawValueBox.ScrollBars = ScrollBars.Vertical;
-        rawValueBox.Size = new Size(424, 80);
+        rawValueBox.Size = new Size(424, 56);
         rawValueBox.TabIndex = 4;
         trayMenu.Items.AddRange(new ToolStripItem[] { openMenuItem, refreshMenuItem, exitMenuItem });
         openMenuItem.Text = "Open";
@@ -375,10 +390,10 @@ partial class Form1
         notifyIcon.DoubleClick += notifyIcon_DoubleClick;
         AutoScaleMode = AutoScaleMode.Font;
         BackColor = Color.White;
-        ClientSize = new Size(920, 542);
+        ClientSize = new Size(1100, 562);
         Controls.Add(rootLayout);
         Font = new Font("Segoe UI", 9F);
-        MinimumSize = new Size(860, 520);
+        MinimumSize = new Size(980, 540);
         Name = "Form1";
         Padding = new Padding(18);
         StartPosition = FormStartPosition.CenterScreen;

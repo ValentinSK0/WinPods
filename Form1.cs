@@ -4,16 +4,21 @@ public partial class Form1 : Form
 {
     private readonly BluetoothAirPodsScanner scanner = new();
     private readonly Dictionary<string, AirPodsReading> readingsByAddress = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Windows.Forms.Timer connectedRefreshTimer = new();
+    private IReadOnlyList<ConnectedBluetoothDevice> connectedBluetoothDevices = Array.Empty<ConnectedBluetoothDevice>();
     private AirPodsReading? latestReading;
     private string? selectedAddress;
     private bool exiting;
     private bool scannerStarted;
+    private bool connectedRefreshRunning;
 
     public Form1()
     {
         InitializeComponent();
         scanner.ReadingReceived += ScannerOnReadingReceived;
         scanner.ScannerStatusChanged += ScannerOnScannerStatusChanged;
+        connectedRefreshTimer.Interval = 5000;
+        connectedRefreshTimer.Tick += connectedRefreshTimer_Tick;
         UpdateReading(null);
     }
 
@@ -27,6 +32,8 @@ public partial class Form1 : Form
         {
             scannerStarted = true;
             scanner.Start();
+            connectedRefreshTimer.Start();
+            _ = RefreshConnectedDevicesAsync();
         }
     }
 
@@ -114,6 +121,7 @@ public partial class Form1 : Form
             caseBatteryLabel.Text = "-";
             signalValueLabel.Text = "-";
             addressValueLabel.Text = "-";
+            connectedValueLabel.Text = "-";
             rawValueBox.Text = "Cakam na AirPods BLE packet. Otvor case pri PC.";
         }
         else
@@ -124,6 +132,7 @@ public partial class Form1 : Form
             caseBatteryLabel.Text = AirPodsReading.FormatBattery(latestReading.CaseBattery, latestReading.CaseCharging);
             signalValueLabel.Text = $"{latestReading.Rssi} dBm, {latestReading.SeenAt:HH:mm:ss}";
             addressValueLabel.Text = latestReading.Address;
+            connectedValueLabel.Text = GetConnectedText(latestReading);
             rawValueBox.Text = latestReading.RawManufacturerData;
         }
 
@@ -138,11 +147,15 @@ public partial class Form1 : Form
 
         foreach (var reading in readingsByAddress.Values.OrderByDescending(static r => r.SeenAt))
         {
+            var isConnected = IsReadingConnected(reading);
             var item = new ListViewItem(reading.Model)
             {
                 Tag = reading.Address,
+                ForeColor = isConnected ? Color.FromArgb(10, 92, 190) : Color.FromArgb(28, 34, 42),
+                Font = isConnected ? new Font(deviceListView.Font, FontStyle.Bold) : deviceListView.Font,
             };
 
+            item.SubItems.Add(isConnected ? "BT connected" : "");
             item.SubItems.Add(reading.Summary);
             item.SubItems.Add($"{reading.Rssi} dBm");
             item.SubItems.Add(reading.SeenAt.ToString("HH:mm:ss"));
@@ -182,9 +195,10 @@ public partial class Form1 : Form
     private void UpdateDeviceHint()
     {
         var count = readingsByAddress.Count;
+        var connected = connectedBluetoothDevices.Count(IsAppleAudioDevice);
         deviceHintLabel.Text = count == 0
             ? "Open AirPods case near PC."
-            : $"{count} AirPods/Beats device(s) found. Select yours from left list.";
+            : $"{count} AirPods/Beats device(s) found. {connected} Windows BT connected.";
     }
 
     private void UpdateTray()
@@ -216,6 +230,7 @@ public partial class Form1 : Form
         statusValueLabel.Text = "Refreshing";
         scanner.Stop();
         scanner.Start();
+        _ = RefreshConnectedDevicesAsync();
     }
 
     private void deviceListView_SelectedIndexChanged(object sender, EventArgs e)
@@ -241,4 +256,117 @@ public partial class Form1 : Form
 
     private void notifyIcon_DoubleClick(object sender, EventArgs e) => ShowWindow();
 
+    private void connectedRefreshTimer_Tick(object? sender, EventArgs e)
+    {
+        _ = RefreshConnectedDevicesAsync();
+    }
+
+    private async Task RefreshConnectedDevicesAsync()
+    {
+        if (connectedRefreshRunning)
+        {
+            return;
+        }
+
+        connectedRefreshRunning = true;
+
+        try
+        {
+            var devices = await ConnectedBluetoothProvider.GetConnectedDevicesAsync();
+            RunOnUiThread(() =>
+            {
+                connectedBluetoothDevices = devices;
+                RefreshDeviceList();
+
+                if (latestReading is not null)
+                {
+                    connectedValueLabel.Text = GetConnectedText(latestReading);
+                }
+            });
+        }
+        finally
+        {
+            connectedRefreshRunning = false;
+        }
+    }
+
+    private bool IsReadingConnected(AirPodsReading reading)
+    {
+        if (connectedBluetoothDevices.Any(device => device.Address.Equals(reading.Address, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        var fallback = GetFallbackConnectedAddress();
+        return fallback is not null && fallback.Equals(reading.Address, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string? GetFallbackConnectedAddress()
+    {
+        var appleDevices = connectedBluetoothDevices.Where(IsAppleAudioDevice).ToList();
+        if (appleDevices.Count == 0 || readingsByAddress.Count == 0)
+        {
+            return null;
+        }
+
+        return readingsByAddress.Values
+            .Where(reading => appleDevices.Any(device => IsLikelySameDevice(reading, device)))
+            .OrderByDescending(static reading => reading.Rssi)
+            .ThenByDescending(static reading => reading.SeenAt)
+            .Select(static reading => reading.Address)
+            .FirstOrDefault();
+    }
+
+    private string GetConnectedText(AirPodsReading reading)
+    {
+        var exact = connectedBluetoothDevices.FirstOrDefault(device =>
+            device.Address.Equals(reading.Address, StringComparison.OrdinalIgnoreCase));
+
+        if (exact is not null)
+        {
+            return $"BT connected: {exact.Name}";
+        }
+
+        if (IsReadingConnected(reading))
+        {
+            var name = connectedBluetoothDevices.FirstOrDefault(IsAppleAudioDevice)?.Name;
+            return string.IsNullOrWhiteSpace(name) ? "BT connected" : $"BT connected: {name}";
+        }
+
+        return "Not connected in Windows";
+    }
+
+    private static bool IsAppleAudioDevice(ConnectedBluetoothDevice device)
+    {
+        var name = device.Name.ToLowerInvariant();
+        return name.Contains("airpods") || name.Contains("air pods") || name.Contains("beats");
+    }
+
+    private static bool IsLikelySameDevice(AirPodsReading reading, ConnectedBluetoothDevice device)
+    {
+        var name = device.Name.ToLowerInvariant();
+        var model = reading.Model.ToLowerInvariant();
+
+        if (name.Contains("beats") && model.Contains("beats"))
+        {
+            return true;
+        }
+
+        if (!name.Contains("airpods") && !name.Contains("air pods"))
+        {
+            return false;
+        }
+
+        if (name.Contains("max"))
+        {
+            return model.Contains("max");
+        }
+
+        if (name.Contains("pro"))
+        {
+            return model.Contains("pro");
+        }
+
+        return model.Contains("airpods");
+    }
 }
