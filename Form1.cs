@@ -8,6 +8,8 @@ public partial class Form1 : Form
     private IReadOnlyList<ConnectedBluetoothDevice> connectedBluetoothDevices = Array.Empty<ConnectedBluetoothDevice>();
     private AirPodsReading? latestReading;
     private string? selectedAddress;
+    private DeviceSortColumn sortColumn = DeviceSortColumn.Seen;
+    private SortOrder sortOrder = SortOrder.Descending;
     private bool exiting;
     private bool scannerStarted;
     private bool connectedRefreshRunning;
@@ -145,7 +147,7 @@ public partial class Form1 : Form
         deviceListView.BeginUpdate();
         deviceListView.Items.Clear();
 
-        foreach (var reading in readingsByAddress.Values.OrderByDescending(static r => r.SeenAt))
+        foreach (var reading in SortReadings(readingsByAddress.Values))
         {
             var isConnected = IsReadingConnected(reading);
             var item = new ListViewItem(reading.Model)
@@ -163,6 +165,7 @@ public partial class Form1 : Form
             deviceListView.Items.Add(item);
         }
 
+        UpdateColumnHeaders();
         deviceListView.EndUpdate();
 
         if (selected is not null)
@@ -368,5 +371,74 @@ public partial class Form1 : Form
         }
 
         return model.Contains("airpods");
+    }
+
+    private IEnumerable<AirPodsReading> SortReadings(IEnumerable<AirPodsReading> readings)
+    {
+        return sortColumn switch
+        {
+            DeviceSortColumn.Name => ApplySort(readings, static r => r.Model),
+            DeviceSortColumn.Connected => ApplySort(readings, r => IsReadingConnected(r)),
+            DeviceSortColumn.Battery => ApplySort(readings, static r => r.BestBattery ?? -1),
+            DeviceSortColumn.Signal => ApplySort(readings, static r => r.Rssi),
+            DeviceSortColumn.Seen => ApplySort(readings, static r => r.SeenAt),
+            DeviceSortColumn.Address => ApplySort(readings, static r => r.Address),
+            _ => readings,
+        };
+    }
+
+    private IEnumerable<AirPodsReading> ApplySort<TKey>(IEnumerable<AirPodsReading> readings, Func<AirPodsReading, TKey> keySelector)
+    {
+        return sortOrder == SortOrder.Ascending
+            ? readings.OrderBy(keySelector).ThenBy(static r => r.Address)
+            : readings.OrderByDescending(keySelector).ThenBy(static r => r.Address);
+    }
+
+    private void deviceListView_ColumnClick(object sender, ColumnClickEventArgs e)
+    {
+        var clicked = (DeviceSortColumn)e.Column;
+        if (sortColumn == clicked)
+        {
+            sortOrder = sortOrder == SortOrder.Ascending ? SortOrder.Descending : SortOrder.Ascending;
+        }
+        else
+        {
+            sortColumn = clicked;
+            sortOrder = clicked is DeviceSortColumn.Name or DeviceSortColumn.Address
+                ? SortOrder.Ascending
+                : SortOrder.Descending;
+        }
+
+        RefreshDeviceList();
+    }
+
+    private void UpdateColumnHeaders()
+    {
+        deviceNameColumn.Text = HeaderText("Name", DeviceSortColumn.Name);
+        deviceConnectedColumn.Text = HeaderText("Windows", DeviceSortColumn.Connected);
+        deviceBatteryColumn.Text = HeaderText("Battery", DeviceSortColumn.Battery);
+        deviceSignalColumn.Text = HeaderText("Signal", DeviceSortColumn.Signal);
+        deviceSeenColumn.Text = HeaderText("Seen", DeviceSortColumn.Seen);
+        deviceAddressColumn.Text = HeaderText("Address", DeviceSortColumn.Address);
+    }
+
+    private string HeaderText(string text, DeviceSortColumn column)
+    {
+        if (sortColumn != column)
+        {
+            return text;
+        }
+
+        return sortOrder == SortOrder.Ascending ? $"{text} ^" : $"{text} v";
+    }
+
+    private enum DeviceSortColumn
+    {
+        Name = 0,
+        Connected = 1,
+        Battery = 2,
+        Signal = 3,
+        Seen = 4,
+        Address = 5,
     }
 }

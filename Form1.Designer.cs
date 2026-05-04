@@ -213,7 +213,7 @@ partial class Form1
         deviceListView.Columns.AddRange(new ColumnHeader[] { deviceNameColumn, deviceConnectedColumn, deviceBatteryColumn, deviceSignalColumn, deviceSeenColumn, deviceAddressColumn });
         deviceListView.FullRowSelect = true;
         deviceListView.GridLines = true;
-        deviceListView.HeaderStyle = ColumnHeaderStyle.Nonclickable;
+        deviceListView.HeaderStyle = ColumnHeaderStyle.Clickable;
         deviceListView.HideSelection = false;
         deviceListView.Location = new Point(14, 68);
         deviceListView.MultiSelect = false;
@@ -222,6 +222,7 @@ partial class Form1
         deviceListView.TabIndex = 2;
         deviceListView.UseCompatibleStateImageBehavior = false;
         deviceListView.View = View.Details;
+        deviceListView.ColumnClick += deviceListView_ColumnClick;
         deviceListView.SelectedIndexChanged += deviceListView_SelectedIndexChanged;
         deviceNameColumn.Text = "Name";
         deviceNameColumn.Width = 112;
