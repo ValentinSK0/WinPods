@@ -1,35 +1,23 @@
 using System.Drawing.Drawing2D;
-using System.Drawing.Text;
 using System.Runtime.InteropServices;
 
 namespace WinPods;
 
 public static class TrayIconFactory
 {
-    public static Icon Create(int? battery, bool online)
+    public static Icon Create(bool online)
     {
         using var bitmap = new Bitmap(32, 32);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
         graphics.Clear(Color.Transparent);
 
-        var fill = !online ? Color.FromArgb(120, 120, 120) : BatteryColor(battery);
-        using var outlinePen = new Pen(Color.FromArgb(32, 32, 32), 2);
-        using var fillBrush = new SolidBrush(fill);
-        using var textBrush = new SolidBrush(Color.White);
+        var shell = online ? Color.White : Color.FromArgb(190, 194, 200);
+        var accent = online ? Color.FromArgb(22, 116, 210) : Color.FromArgb(118, 126, 138);
+        var shadow = Color.FromArgb(70, 0, 0, 0);
 
-        var body = new Rectangle(3, 9, 24, 14);
-        var cap = new Rectangle(27, 13, 3, 6);
-        using var bodyPath = RoundedRectangle(body, 3);
-        graphics.FillPath(fillBrush, bodyPath);
-        graphics.DrawPath(outlinePen, bodyPath);
-        graphics.FillRectangle(fillBrush, cap);
-
-        var text = battery is null ? "?" : Math.Clamp(battery.Value / 10, 0, 9).ToString();
-        using var font = new Font("Segoe UI", 11F, FontStyle.Bold, GraphicsUnit.Pixel);
-        var textSize = graphics.MeasureString(text, font);
-        graphics.DrawString(text, font, textBrush, 15 - textSize.Width / 2, 10);
+        DrawAirPods(graphics, 1, 1, shadow, Color.FromArgb(45, 0, 0, 0));
+        DrawAirPods(graphics, 0, 0, shell, accent);
 
         var handle = bitmap.GetHicon();
         try
@@ -43,25 +31,33 @@ public static class TrayIconFactory
         }
     }
 
-    private static Color BatteryColor(int? battery) =>
-        battery switch
+    private static void DrawAirPods(Graphics graphics, int offsetX, int offsetY, Color shell, Color accent)
+    {
+        using var shellBrush = new SolidBrush(shell);
+        using var accentPen = new Pen(accent, 2.2f)
         {
-            null => Color.FromArgb(90, 100, 110),
-            <= 20 => Color.FromArgb(210, 60, 50),
-            <= 50 => Color.FromArgb(218, 150, 34),
-            _ => Color.FromArgb(34, 150, 85),
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+        using var stemPen = new Pen(shell, 4.4f)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+        };
+        using var detailPen = new Pen(Color.FromArgb(150, accent), 1.5f)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
         };
 
-    private static GraphicsPath RoundedRectangle(Rectangle bounds, int radius)
-    {
-        var path = new GraphicsPath();
-        var diameter = radius * 2;
-        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
-        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
-        path.CloseFigure();
-        return path;
+        graphics.DrawLine(stemPen, 11 + offsetX, 15 + offsetY, 11 + offsetX, 27 + offsetY);
+        graphics.DrawLine(stemPen, 21 + offsetX, 15 + offsetY, 21 + offsetX, 27 + offsetY);
+        graphics.FillEllipse(shellBrush, 5 + offsetX, 5 + offsetY, 12, 13);
+        graphics.FillEllipse(shellBrush, 15 + offsetX, 5 + offsetY, 12, 13);
+        graphics.DrawArc(accentPen, 5 + offsetX, 5 + offsetY, 12, 13, 205, 118);
+        graphics.DrawArc(accentPen, 15 + offsetX, 5 + offsetY, 12, 13, 217, 118);
+        graphics.DrawLine(detailPen, 10 + offsetX, 15 + offsetY, 10 + offsetX, 24 + offsetY);
+        graphics.DrawLine(detailPen, 22 + offsetX, 15 + offsetY, 22 + offsetX, 24 + offsetY);
     }
 
     [DllImport("user32.dll", SetLastError = true)]

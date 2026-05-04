@@ -206,12 +206,11 @@ public partial class Form1 : Form
 
     private void UpdateTray()
     {
-        var battery = latestReading?.BestBattery;
         var oldIcon = notifyIcon.Icon;
         notifyIcon.Text = latestReading is null
             ? "WinPods - cakam na AirPods"
             : $"WinPods - {latestReading.Summary}";
-        notifyIcon.Icon = TrayIconFactory.Create(battery, latestReading is not null);
+        notifyIcon.Icon = TrayIconFactory.Create(latestReading is not null);
         oldIcon?.Dispose();
     }
 
