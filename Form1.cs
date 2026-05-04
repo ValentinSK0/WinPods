@@ -132,6 +132,7 @@ public partial class Form1 : Form
             leftBatteryLabel.Text = AirPodsReading.FormatBattery(latestReading.LeftBattery, latestReading.LeftCharging);
             rightBatteryLabel.Text = AirPodsReading.FormatBattery(latestReading.RightBattery, latestReading.RightCharging);
             caseBatteryLabel.Text = AirPodsReading.FormatBattery(latestReading.CaseBattery, latestReading.CaseCharging);
+            FitBatteryLabels();
             signalValueLabel.Text = $"{latestReading.Rssi} dBm, {latestReading.SeenAt:HH:mm:ss}";
             addressValueLabel.Text = latestReading.Address;
             connectedValueLabel.Text = GetConnectedText(latestReading);
@@ -139,6 +140,46 @@ public partial class Form1 : Form
         }
 
         UpdateTray();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        FitBatteryLabels();
+    }
+
+    private void mainSplit_SplitterMoved(object sender, SplitterEventArgs e)
+    {
+        FitBatteryLabels();
+    }
+
+    private void FitBatteryLabels()
+    {
+        FitBatteryLabel(leftBatteryLabel);
+        FitBatteryLabel(rightBatteryLabel);
+        FitBatteryLabel(caseBatteryLabel);
+    }
+
+    private static void FitBatteryLabel(Label label)
+    {
+        const float maxSize = 17f;
+        const float minSize = 9f;
+
+        var text = string.IsNullOrWhiteSpace(label.Text) ? "-" : label.Text;
+        var available = Math.Max(24, label.ClientSize.Width - 4);
+
+        for (var size = maxSize; size >= minSize; size -= 0.5f)
+        {
+            using var testFont = new Font(label.Font.FontFamily, size, FontStyle.Bold);
+            var measured = TextRenderer.MeasureText(text, testFont, Size.Empty, TextFormatFlags.NoPadding);
+            if (measured.Width <= available)
+            {
+                label.Font = new Font(label.Font.FontFamily, size, FontStyle.Bold);
+                return;
+            }
+        }
+
+        label.Font = new Font(label.Font.FontFamily, minSize, FontStyle.Bold);
     }
 
     private void RefreshDeviceList()
