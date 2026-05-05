@@ -3,16 +3,21 @@ namespace WinPods;
 public partial class Form1 : Form
 {
     private readonly BluetoothAirPodsScanner scanner = new();
+    private readonly AirPodsAapClient aapClient = new();
     private readonly Dictionary<string, AirPodsReading> readingsByAddress = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Windows.Forms.Timer connectedRefreshTimer = new();
     private IReadOnlyList<ConnectedBluetoothDevice> connectedBluetoothDevices = Array.Empty<ConnectedBluetoothDevice>();
     private AirPodsReading? latestReading;
+    private AirPodsListeningMode? currentListeningMode;
     private string? selectedAddress;
     private DeviceSortColumn sortColumn = DeviceSortColumn.Seen;
     private SortOrder sortOrder = SortOrder.Descending;
     private bool exiting;
     private bool scannerStarted;
     private bool connectedRefreshRunning;
+    private bool listeningModeBusy;
+    private bool exactBatteryRefreshRunning;
+    private DateTimeOffset lastExactBatteryRefresh = DateTimeOffset.MinValue;
 
     public Form1()
     {
@@ -22,6 +27,7 @@ public partial class Form1 : Form
         connectedRefreshTimer.Interval = 5000;
         connectedRefreshTimer.Tick += connectedRefreshTimer_Tick;
         UpdateReading(null);
+        UpdateListeningModeUi();
     }
 
     protected override void OnShown(EventArgs e)
@@ -136,10 +142,15 @@ public partial class Form1 : Form
             signalValueLabel.Text = $"{latestReading.Rssi} dBm, {latestReading.SeenAt:HH:mm:ss}";
             addressValueLabel.Text = latestReading.Address;
             connectedValueLabel.Text = GetConnectedText(latestReading);
-            rawValueBox.Text = latestReading.RawManufacturerData;
+            if (!rawValueBox.Text.StartsWith("AAP ", StringComparison.Ordinal))
+            {
+                rawValueBox.Text = "BLE data received. Raw advertisement hidden.";
+            }
         }
 
+        UpdateListeningModeUi();
         UpdateTray();
+        MaybeRefreshExactBattery();
     }
 
     protected override void OnResize(EventArgs e)
@@ -188,7 +199,8 @@ public partial class Form1 : Form
         deviceListView.BeginUpdate();
         deviceListView.Items.Clear();
 
-        foreach (var reading in SortReadings(readingsByAddress.Values))
+        var displayReadings = GetDisplayReadings();
+        foreach (var reading in SortReadings(displayReadings))
         {
             var isConnected = IsReadingConnected(reading);
             var item = new ListViewItem(reading.Model)
@@ -238,7 +250,7 @@ public partial class Form1 : Form
 
     private void UpdateDeviceHint()
     {
-        var count = readingsByAddress.Count;
+        var count = GetDisplayReadings().Count;
         var connected = connectedBluetoothDevices.Count(IsAppleAudioDevice);
         deviceHintLabel.Text = count == 0
             ? "Open AirPods case near PC."
@@ -287,6 +299,7 @@ public partial class Form1 : Form
 
         selectedAddress = address;
         UpdateReading(reading);
+        UpdateListeningModeUi();
     }
 
     private void openMenuItem_Click(object sender, EventArgs e) => ShowWindow();
@@ -325,6 +338,8 @@ public partial class Form1 : Form
                 {
                     connectedValueLabel.Text = GetConnectedText(latestReading);
                 }
+
+                UpdateListeningModeUi();
             });
         }
         finally
@@ -378,6 +393,269 @@ public partial class Form1 : Form
 
         return "Not connected in Windows";
     }
+
+    private ConnectedBluetoothDevice? GetTargetControlDevice()
+    {
+        if (latestReading is not null)
+        {
+            var exact = connectedBluetoothDevices.FirstOrDefault(device =>
+                device.Address.Equals(latestReading.Address, StringComparison.OrdinalIgnoreCase));
+            if (exact is not null)
+            {
+                return exact;
+            }
+
+            var likely = connectedBluetoothDevices
+                .Where(IsAppleAudioDevice)
+                .FirstOrDefault(device => IsLikelySameDevice(latestReading, device));
+            if (likely is not null)
+            {
+                return likely;
+            }
+        }
+
+        return connectedBluetoothDevices.FirstOrDefault(IsAppleAudioDevice);
+    }
+
+    private List<AirPodsReading> GetDisplayReadings()
+    {
+        var readings = readingsByAddress.Values
+            .OrderByDescending(IsReadingConnected)
+            .ThenByDescending(static reading => reading.Rssi)
+            .ThenByDescending(static reading => reading.SeenAt)
+            .ToList();
+
+        var groups = new List<List<AirPodsReading>>();
+        foreach (var reading in readings)
+        {
+            var group = groups.FirstOrDefault(existing => existing.Any(item => ShouldMergeReadings(item, reading)));
+            if (group is null)
+            {
+                groups.Add([reading]);
+            }
+            else
+            {
+                group.Add(reading);
+            }
+        }
+
+        return groups.Select(MergeReadings).ToList();
+    }
+
+    private bool ShouldMergeReadings(AirPodsReading a, AirPodsReading b)
+    {
+        if (!a.Model.Equals(b.Model, StringComparison.OrdinalIgnoreCase) ||
+            !a.Color.Equals(b.Color, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var seenDiff = (a.SeenAt - b.SeenAt).Duration();
+        var signalDiff = Math.Abs(a.Rssi - b.Rssi);
+        var anyConnected = IsReadingConnected(a) || IsReadingConnected(b);
+
+        return seenDiff <= TimeSpan.FromMinutes(2) && (signalDiff <= 35 || anyConnected);
+    }
+
+    private AirPodsReading MergeReadings(List<AirPodsReading> group)
+    {
+        var primary = group
+            .OrderByDescending(IsReadingConnected)
+            .ThenByDescending(static reading => reading.Rssi)
+            .ThenByDescending(static reading => reading.SeenAt)
+            .First();
+
+        return primary with
+        {
+            Rssi = group.Max(static reading => reading.Rssi),
+            LeftBattery = BestBatteryValue(group.Select(static reading => reading.LeftBattery)),
+            RightBattery = BestBatteryValue(group.Select(static reading => reading.RightBattery)),
+            CaseBattery = BestBatteryValue(group.Select(static reading => reading.CaseBattery)),
+            LeftCharging = BestChargingValue(group.Select(static reading => reading.LeftCharging)),
+            RightCharging = BestChargingValue(group.Select(static reading => reading.RightCharging)),
+            CaseCharging = BestChargingValue(group.Select(static reading => reading.CaseCharging)),
+            SeenAt = group.Max(static reading => reading.SeenAt),
+        };
+    }
+
+    private static int? BestBatteryValue(IEnumerable<int?> values)
+    {
+        var known = values.Where(static value => value.HasValue).Select(static value => value!.Value).ToList();
+        return known.Count == 0 ? null : known.Max();
+    }
+
+    private static bool? BestChargingValue(IEnumerable<bool?> values)
+    {
+        if (values.Any(static value => value == true))
+        {
+            return true;
+        }
+
+        return values.Any(static value => value == false) ? false : null;
+    }
+
+    private async void transparencyButton_Click(object sender, EventArgs e)
+        => await SetListeningModeAsync(AirPodsListeningMode.Transparency);
+
+    private async void adaptiveButton_Click(object sender, EventArgs e)
+        => await SetListeningModeAsync(AirPodsListeningMode.Adaptive);
+
+    private async void noiseCancelButton_Click(object sender, EventArgs e)
+        => await SetListeningModeAsync(AirPodsListeningMode.NoiseCancellation);
+
+    private async Task SetListeningModeAsync(AirPodsListeningMode mode)
+    {
+        if (listeningModeBusy)
+        {
+            return;
+        }
+
+        var target = GetTargetControlDevice();
+        if (target is null)
+        {
+            listeningModeStatusLabel.Text = "AirPods not connected in Windows Bluetooth.";
+            UpdateListeningModeUi();
+            return;
+        }
+
+        listeningModeBusy = true;
+        listeningModeStatusLabel.Text = $"Sending {DisplayMode(mode)} to {target.Name}...";
+        rawValueBox.Text = $"AAP target: {target.Name} ({target.Address})\r\nMode: {DisplayMode(mode)}\r\nConnecting...";
+        UpdateListeningModeUi();
+
+        try
+        {
+            var result = await aapClient.SetListeningModeAsync(target.Address, mode);
+            currentListeningMode = result.ConfirmedMode ?? mode;
+            listeningModeStatusLabel.Text = result.ConfirmedMode is null
+                ? $"Sent {DisplayMode(mode)}. No confirmation packet received."
+                : $"Mode confirmed: {DisplayMode(currentListeningMode.Value)}.";
+            rawValueBox.Text = result.ResponsePacket is null
+                ? $"AAP sent {DisplayMode(mode)} to {target.Name} ({target.Address}).\r\nNo confirmation packet received."
+                : $"AAP sent {DisplayMode(mode)} to {target.Name} ({target.Address}).\r\nResponse: {Convert.ToHexString(result.ResponsePacket)}";
+        }
+        catch (Exception ex)
+        {
+            listeningModeStatusLabel.Text = "Mode switch failed. Full error below.";
+            rawValueBox.Text = ex.ToString();
+        }
+        finally
+        {
+            listeningModeBusy = false;
+            UpdateListeningModeUi();
+        }
+    }
+
+    private void MaybeRefreshExactBattery()
+    {
+        if (exactBatteryRefreshRunning ||
+            latestReading is null ||
+            !IsReadingConnected(latestReading) ||
+            DateTimeOffset.Now - lastExactBatteryRefresh < TimeSpan.FromSeconds(15))
+        {
+            return;
+        }
+
+        var target = GetTargetControlDevice();
+        if (target is null)
+        {
+            return;
+        }
+
+        exactBatteryRefreshRunning = true;
+        lastExactBatteryRefresh = DateTimeOffset.Now;
+        _ = RefreshExactBatteryAsync(target);
+    }
+
+    private async Task RefreshExactBatteryAsync(ConnectedBluetoothDevice target)
+    {
+        try
+        {
+            var battery = await aapClient.GetBatteryAsync(target.Address);
+            if (battery is null)
+            {
+                return;
+            }
+
+            RunOnUiThread(() => ApplyExactBattery(target.Address, battery));
+        }
+        catch
+        {
+            // BLE 10% battery remains as fallback when AAP battery notification is unavailable.
+        }
+        finally
+        {
+            exactBatteryRefreshRunning = false;
+        }
+    }
+
+    private void ApplyExactBattery(string targetAddress, AirPodsBatterySnapshot battery)
+    {
+        if (latestReading is null)
+        {
+            return;
+        }
+
+        var updated = latestReading with
+        {
+            LeftBattery = battery.LeftBattery ?? latestReading.LeftBattery,
+            RightBattery = battery.RightBattery ?? latestReading.RightBattery,
+            CaseBattery = battery.CaseBattery ?? latestReading.CaseBattery,
+            LeftCharging = battery.LeftCharging ?? latestReading.LeftCharging,
+            RightCharging = battery.RightCharging ?? latestReading.RightCharging,
+            CaseCharging = battery.CaseCharging ?? latestReading.CaseCharging,
+        };
+
+        readingsByAddress[updated.Address] = updated;
+        latestReading = updated;
+
+        leftBatteryLabel.Text = AirPodsReading.FormatBattery(updated.LeftBattery, updated.LeftCharging);
+        rightBatteryLabel.Text = AirPodsReading.FormatBattery(updated.RightBattery, updated.RightCharging);
+        caseBatteryLabel.Text = AirPodsReading.FormatBattery(updated.CaseBattery, updated.CaseCharging);
+        FitBatteryLabels();
+        RefreshDeviceList();
+
+        if (!rawValueBox.Text.StartsWith("AAP sent", StringComparison.Ordinal))
+        {
+            rawValueBox.Text = $"AAP exact battery from {targetAddress}.\r\nLeft: {leftBatteryLabel.Text}\r\nRight: {rightBatteryLabel.Text}\r\nCase: {caseBatteryLabel.Text}";
+        }
+
+        UpdateTray();
+    }
+
+    private void UpdateListeningModeUi()
+    {
+        var canSend = !listeningModeBusy && GetTargetControlDevice() is not null;
+        transparencyButton.Enabled = canSend;
+        adaptiveButton.Enabled = canSend;
+        noiseCancelButton.Enabled = canSend;
+
+        StyleModeButton(transparencyButton, AirPodsListeningMode.Transparency, Color.FromArgb(241, 250, 246));
+        StyleModeButton(adaptiveButton, AirPodsListeningMode.Adaptive, Color.FromArgb(241, 247, 252));
+        StyleModeButton(noiseCancelButton, AirPodsListeningMode.NoiseCancellation, Color.FromArgb(248, 245, 255));
+
+        if (!canSend && !listeningModeBusy)
+        {
+            listeningModeStatusLabel.Text = "Connect AirPods in Windows Bluetooth to control mode.";
+        }
+    }
+
+    private void StyleModeButton(Button button, AirPodsListeningMode mode, Color idleColor)
+    {
+        var active = currentListeningMode == mode;
+        button.BackColor = active ? Color.FromArgb(10, 92, 190) : idleColor;
+        button.ForeColor = active ? Color.White : Color.FromArgb(28, 34, 42);
+        button.FlatAppearance.BorderColor = active ? Color.FromArgb(10, 92, 190) : Color.FromArgb(205, 213, 224);
+    }
+
+    private static string DisplayMode(AirPodsListeningMode mode) =>
+        mode switch
+        {
+            AirPodsListeningMode.Transparency => "Transparency",
+            AirPodsListeningMode.Adaptive => "Adaptive",
+            AirPodsListeningMode.NoiseCancellation => "Noise Cancellation",
+            _ => mode.ToString(),
+        };
 
     private static bool IsAppleAudioDevice(ConnectedBluetoothDevice device)
     {
