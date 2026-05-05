@@ -196,38 +196,26 @@ public partial class Form1 : Form
     private void RefreshDeviceList()
     {
         var selected = selectedAddress;
-        deviceListView.BeginUpdate();
-        deviceListView.Items.Clear();
+        deviceCardsPanel.SuspendLayout();
+        deviceCardsPanel.Controls.Clear();
 
         var displayReadings = GetDisplayReadings();
         foreach (var reading in SortReadings(displayReadings))
         {
-            var isConnected = IsReadingConnected(reading);
-            var item = new ListViewItem(reading.Model)
-            {
-                Tag = reading.Address,
-                ForeColor = isConnected ? Color.FromArgb(10, 92, 190) : Color.FromArgb(28, 34, 42),
-                Font = isConnected ? new Font(deviceListView.Font, FontStyle.Bold) : deviceListView.Font,
-            };
-
-            item.SubItems.Add(isConnected ? "BT connected" : "");
-            item.SubItems.Add(reading.Summary);
-            item.SubItems.Add($"{reading.Rssi} dBm");
-            item.SubItems.Add(reading.SeenAt.ToString("HH:mm:ss"));
-            item.SubItems.Add(reading.Address);
-            deviceListView.Items.Add(item);
+            deviceCardsPanel.Controls.Add(CreateDeviceCard(reading));
         }
 
-        UpdateColumnHeaders();
-        deviceListView.EndUpdate();
+        deviceCardsPanel.ResumeLayout();
 
         if (selected is not null)
         {
             SelectDeviceInList(selected);
         }
-        else if (deviceListView.Items.Count > 0)
+        else if (deviceCardsPanel.Controls.Count > 0 &&
+            deviceCardsPanel.Controls[0].Tag is AirPodsReading firstReading)
         {
-            deviceListView.Items[0].Selected = true;
+            selectedAddress = firstReading.Address;
+            UpdateReading(firstReading);
         }
 
         UpdateDeviceHint();
@@ -235,16 +223,157 @@ public partial class Form1 : Form
 
     private void SelectDeviceInList(string address)
     {
-        foreach (ListViewItem item in deviceListView.Items)
+        AirPodsReading? fallback = null;
+        foreach (Control control in deviceCardsPanel.Controls)
         {
-            if (item.Tag is string itemAddress &&
-                itemAddress.Equals(address, StringComparison.OrdinalIgnoreCase))
+            if (control.Tag is not AirPodsReading reading)
             {
-                item.Selected = true;
-                item.Focused = true;
-                item.EnsureVisible();
-                return;
+                continue;
             }
+
+            var selected = reading.Address.Equals(address, StringComparison.OrdinalIgnoreCase);
+            control.BackColor = selected ? Color.FromArgb(24, 119, 242) : Color.FromArgb(218, 224, 232);
+            control.Padding = selected ? new Padding(2) : new Padding(1);
+
+            if (selected)
+            {
+                fallback = reading;
+            }
+        }
+
+        if (fallback is not null)
+        {
+            UpdateReading(fallback);
+        }
+    }
+
+    private Control CreateDeviceCard(AirPodsReading reading)
+    {
+        var connected = IsReadingConnected(reading);
+        var selected = selectedAddress is not null &&
+            reading.Address.Equals(selectedAddress, StringComparison.OrdinalIgnoreCase);
+        const int cardWidth = 260;
+        var card = new Panel
+        {
+            Width = cardWidth,
+            Height = 312,
+            Margin = new Padding(0, 0, 14, 14),
+            BackColor = selected ? Color.FromArgb(24, 119, 242) : Color.FromArgb(218, 224, 232),
+            Padding = selected ? new Padding(2) : new Padding(1),
+            Tag = reading,
+            Cursor = Cursors.Hand,
+        };
+
+        var inner = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Color.White,
+            Cursor = Cursors.Hand,
+        };
+        card.Controls.Add(inner);
+
+        var visual = new AirPodsVisualPanel
+        {
+            Dock = DockStyle.Top,
+            Battery = reading.BestBattery ?? 0,
+            Connected = connected,
+        };
+        inner.Controls.Add(visual);
+
+        var model = MakeCardLabel(reading.Model, 12.5F, FontStyle.Bold, Color.FromArgb(28, 34, 42), 14, 132, cardWidth - 30, 24);
+        inner.Controls.Add(model);
+
+        var subTitle = MakeCardLabel(ModelGeneration(reading), 8.5F, FontStyle.Bold, Color.FromArgb(100, 108, 120), 14, 154, cardWidth - 30, 20);
+        inner.Controls.Add(subTitle);
+
+        AddInfoRow(inner, "Bluetooth", connected ? "Connected" : "Not connected", connected, 182, cardWidth);
+        AddBatteryBoxes(inner, reading, 224, cardWidth);
+        AddInfoRow(inner, "Signal", SignalText(reading.Rssi), reading.Rssi >= -65, 284, cardWidth);
+        AddInfoRow(inner, "Seen", SeenText(reading.SeenAt), true, 306, cardWidth);
+        var address = MakeCardLabel(reading.Address, 7.5F, FontStyle.Bold, Color.FromArgb(88, 96, 108), 96, 306, 145, 20);
+        address.TextAlign = ContentAlignment.MiddleRight;
+        inner.Controls.Add(address);
+
+        void SelectCard(object? _, EventArgs __)
+        {
+            selectedAddress = reading.Address;
+            UpdateReading(reading);
+            RefreshDeviceList();
+            UpdateListeningModeUi();
+        }
+
+        AttachClickRecursive(card, SelectCard);
+        return card;
+    }
+
+    private static Label MakeCardLabel(string text, float size, FontStyle style, Color color, int x, int y, int width, int height)
+    {
+        return new Label
+        {
+            Text = text,
+            Font = new Font("Segoe UI", size, style),
+            ForeColor = color,
+            Location = new Point(x, y),
+            Size = new Size(width, height),
+            AutoEllipsis = true,
+            BackColor = Color.Transparent,
+        };
+    }
+
+    private static void AddInfoRow(Control parent, string label, string value, bool greenDot, int y, int width)
+    {
+        var left = MakeCardLabel(label, 8.5F, FontStyle.Bold, Color.FromArgb(104, 112, 124), 14, y, 96, 20);
+        var right = MakeCardLabel(value, 8.5F, FontStyle.Bold, Color.FromArgb(28, 34, 42), width - 132, y, 114, 20);
+        right.TextAlign = ContentAlignment.MiddleRight;
+        parent.Controls.Add(left);
+        parent.Controls.Add(right);
+
+        if (greenDot)
+        {
+            var dot = new Panel
+            {
+                BackColor = Color.FromArgb(47, 230, 102),
+                Location = new Point(width - 142, y + 7),
+                Size = new Size(7, 7),
+            };
+            parent.Controls.Add(dot);
+        }
+    }
+
+    private static void AddBatteryBoxes(Control parent, AirPodsReading reading, int y, int width)
+    {
+        var title = MakeCardLabel("BATTERY", 7.5F, FontStyle.Bold, Color.FromArgb(130, 138, 150), 14, y - 18, 100, 16);
+        parent.Controls.Add(title);
+        var boxWidth = (width - 52) / 3;
+        AddBatteryBox(parent, "Left", AirPodsReading.FormatBattery(reading.LeftBattery, reading.LeftCharging), 14, y, boxWidth);
+        AddBatteryBox(parent, "Right", AirPodsReading.FormatBattery(reading.RightBattery, reading.RightCharging), 26 + boxWidth, y, boxWidth);
+        AddBatteryBox(parent, "Case", AirPodsReading.FormatBattery(reading.CaseBattery, reading.CaseCharging), 38 + boxWidth * 2, y, boxWidth);
+    }
+
+    private static void AddBatteryBox(Control parent, string label, string value, int x, int y, int width)
+    {
+        var box = new Panel
+        {
+            BackColor = Color.FromArgb(246, 248, 250),
+            Location = new Point(x, y),
+            Size = new Size(width, 44),
+        };
+        var titleLabel = MakeCardLabel(label, 7.5F, FontStyle.Bold, Color.FromArgb(92, 100, 112), 0, 5, width, 16);
+        titleLabel.TextAlign = ContentAlignment.MiddleCenter;
+        box.Controls.Add(titleLabel);
+        var battery = MakeCardLabel(value, 10F, FontStyle.Bold, Color.FromArgb(28, 34, 42), 0, 20, width, 20);
+        battery.TextAlign = ContentAlignment.MiddleCenter;
+        box.Controls.Add(battery);
+        parent.Controls.Add(box);
+    }
+
+    private static void AttachClickRecursive(Control control, EventHandler handler)
+    {
+        control.Click += handler;
+        foreach (Control child in control.Controls)
+        {
+            child.Cursor = Cursors.Hand;
+            AttachClickRecursive(child, handler);
         }
     }
 
@@ -290,17 +419,9 @@ public partial class Form1 : Form
 
     private void deviceListView_SelectedIndexChanged(object sender, EventArgs e)
     {
-        if (deviceListView.SelectedItems.Count == 0 ||
-            deviceListView.SelectedItems[0].Tag is not string address ||
-            !readingsByAddress.TryGetValue(address, out var reading))
-        {
-            return;
-        }
-
-        selectedAddress = address;
-        UpdateReading(reading);
-        UpdateListeningModeUi();
     }
+
+    private void deviceCardsPanel_Resize(object? sender, EventArgs e) => RefreshDeviceList();
 
     private void openMenuItem_Click(object sender, EventArgs e) => ShowWindow();
 
@@ -656,6 +777,57 @@ public partial class Form1 : Form
             AirPodsListeningMode.NoiseCancellation => "Noise Cancellation",
             _ => mode.ToString(),
         };
+
+    private static string ModelGeneration(AirPodsReading reading)
+    {
+        var model = reading.Model.ToLowerInvariant();
+        if (model.Contains("pro 2"))
+        {
+            return "2nd generation";
+        }
+
+        if (model.Contains("pro"))
+        {
+            return "Pro generation";
+        }
+
+        if (model.Contains("3"))
+        {
+            return "3rd generation";
+        }
+
+        if (model.Contains("2"))
+        {
+            return "2nd generation";
+        }
+
+        return "Apple audio";
+    }
+
+    private static string SignalText(short rssi) =>
+        rssi switch
+        {
+            >= -55 => "Strong",
+            >= -70 => "Good",
+            >= -85 => "Weak",
+            _ => "Poor",
+        };
+
+    private static string SeenText(DateTimeOffset seenAt)
+    {
+        var age = DateTimeOffset.Now - seenAt;
+        if (age < TimeSpan.FromSeconds(10))
+        {
+            return "Just now";
+        }
+
+        if (age < TimeSpan.FromMinutes(1))
+        {
+            return $"{(int)age.TotalSeconds}s ago";
+        }
+
+        return seenAt.ToString("HH:mm:ss");
+    }
 
     private static bool IsAppleAudioDevice(ConnectedBluetoothDevice device)
     {

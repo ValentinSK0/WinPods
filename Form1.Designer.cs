@@ -12,6 +12,7 @@ partial class Form1
     private Panel devicesPanel;
     private Label devicesTitleLabel;
     private Label deviceHintLabel;
+    private FlowLayoutPanel deviceCardsPanel;
     private ListView deviceListView;
     private ColumnHeader deviceNameColumn;
     private ColumnHeader deviceConnectedColumn;
@@ -79,6 +80,7 @@ partial class Form1
         devicesPanel = new Panel();
         devicesTitleLabel = new Label();
         deviceHintLabel = new Label();
+        deviceCardsPanel = new FlowLayoutPanel();
         deviceListView = new ListView();
         deviceNameColumn = new ColumnHeader();
         deviceConnectedColumn = new ColumnHeader();
@@ -200,7 +202,7 @@ partial class Form1
         mainSplit.TabIndex = 1;
         mainSplit.SplitterMoved += mainSplit_SplitterMoved;
         devicesPanel.BackColor = Color.FromArgb(247, 248, 250);
-        devicesPanel.Controls.Add(deviceListView);
+        devicesPanel.Controls.Add(deviceCardsPanel);
         devicesPanel.Controls.Add(deviceHintLabel);
         devicesPanel.Controls.Add(devicesTitleLabel);
         devicesPanel.Dock = DockStyle.Fill;
@@ -224,6 +226,16 @@ partial class Form1
         deviceHintLabel.Size = new Size(546, 22);
         deviceHintLabel.TabIndex = 1;
         deviceHintLabel.Text = "Open AirPods case near PC.";
+        deviceCardsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+        deviceCardsPanel.AutoScroll = true;
+        deviceCardsPanel.BackColor = Color.FromArgb(247, 248, 250);
+        deviceCardsPanel.FlowDirection = FlowDirection.LeftToRight;
+        deviceCardsPanel.Location = new Point(14, 68);
+        deviceCardsPanel.Name = "deviceCardsPanel";
+        deviceCardsPanel.Size = new Size(552, 370);
+        deviceCardsPanel.TabIndex = 2;
+        deviceCardsPanel.WrapContents = true;
+        deviceCardsPanel.Resize += deviceCardsPanel_Resize;
         deviceListView.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         deviceListView.BorderStyle = BorderStyle.None;
         deviceListView.Columns.AddRange(new ColumnHeader[] { deviceNameColumn, deviceConnectedColumn, deviceBatteryColumn, deviceSignalColumn, deviceSeenColumn, deviceAddressColumn });
