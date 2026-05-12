@@ -15,6 +15,11 @@ WinPods is a Windows tray app for Apple AirPods. It shows battery info, helps pi
   - Transparency
   - Adaptive
   - Noise Cancellation
+- Call Quality Guard:
+  - Detects AirPods/Beats Hands-Free call audio risk on Windows
+  - Warns when AirPods mic can force low-quality headset audio
+  - Can route output to AirPods stereo and mic to a non-AirPods microphone
+  - Tray menu controls and Sound settings shortcut
 - Sortable device list
 - Refresh button
 - Hide-to-tray behavior
@@ -98,6 +103,17 @@ AirPods BLE advertisements usually expose battery in 10% steps. WinPods uses tha
 When MagicAAP is working, WinPods reads AirPods battery notifications over AAP and can show exact 1% values for left, right, and case.
 
 Case battery may appear only when the case is open or when at least one earbud is inside.
+
+## Call Quality Guard Notes
+
+Windows Bluetooth normally cannot use AirPods high-quality stereo audio and the AirPods microphone at the same time. If an app selects the AirPods Hands-Free microphone, Windows may switch audio to the low-quality headset profile.
+
+Call Quality Guard monitors the default Windows communication audio devices. When it sees AirPods/Beats Hands-Free risk, it warns in the app and tray. The Fix route action tries to set:
+
+- output: AirPods stereo endpoint
+- microphone: laptop, webcam, USB, or other non-AirPods microphone
+
+If Windows blocks automatic routing or no safe microphone is available, open Sound settings from WinPods and set those devices manually.
 
 ## Troubleshooting
 

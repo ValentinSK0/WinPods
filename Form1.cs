@@ -1,12 +1,19 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
 namespace WinPods;
 
 public partial class Form1 : Form
 {
     private readonly BluetoothAirPodsScanner scanner = new();
     private readonly AirPodsAapClient aapClient = new();
+    private readonly CallQualityGuard callQualityGuard = new();
+    private readonly WinPodsSettings settings = WinPodsSettings.Load();
     private readonly Dictionary<string, AirPodsReading> readingsByAddress = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Windows.Forms.Timer connectedRefreshTimer = new();
+    private readonly System.Windows.Forms.Timer callQualityGuardTimer = new();
     private IReadOnlyList<ConnectedBluetoothDevice> connectedBluetoothDevices = Array.Empty<ConnectedBluetoothDevice>();
+    private CallQualityGuardSnapshot callQualitySnapshot = CallQualityGuardSnapshot.Disabled();
     private AirPodsReading? latestReading;
     private AirPodsListeningMode? currentListeningMode;
     private string? selectedAddress;
@@ -17,7 +24,13 @@ public partial class Form1 : Form
     private bool connectedRefreshRunning;
     private bool listeningModeBusy;
     private bool exactBatteryRefreshRunning;
+    private bool callQualityFixRunning;
+    private bool callQualityCheckRunning;
+    private bool syncingCallQualityEnabled;
     private DateTimeOffset lastExactBatteryRefresh = DateTimeOffset.MinValue;
+    private DateTimeOffset lastCallQualityNotification = DateTimeOffset.MinValue;
+    private string? lastCallQualityNotificationKey;
+    private bool refreshingDeviceCards;
 
     public Form1()
     {
@@ -26,21 +39,33 @@ public partial class Form1 : Form
         scanner.ScannerStatusChanged += ScannerOnScannerStatusChanged;
         connectedRefreshTimer.Interval = 5000;
         connectedRefreshTimer.Tick += connectedRefreshTimer_Tick;
+        callQualityGuardTimer.Interval = 3000;
+        callQualityGuardTimer.Tick += callQualityGuardTimer_Tick;
+        RestoreDeviceSort();
+        RestoreWindowLayout();
+        SyncCallQualityEnabledUi();
         UpdateReading(null);
+        UpdateScanControls();
         UpdateListeningModeUi();
+        UpdateSortButtonText();
+        QueueCallQualityGuardRefresh();
     }
 
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
-        WindowState = FormWindowState.Normal;
+        if (settings.WindowMaximized)
+        {
+            WindowState = FormWindowState.Maximized;
+        }
         Activate();
 
         if (!scannerStarted)
         {
             scannerStarted = true;
-            scanner.Start();
+            StartScan();
             connectedRefreshTimer.Start();
+            callQualityGuardTimer.Start();
             _ = RefreshConnectedDevicesAsync();
         }
     }
@@ -49,12 +74,14 @@ public partial class Form1 : Form
     {
         if (!exiting && e.CloseReason == CloseReason.UserClosing)
         {
+            SaveWindowLayout();
             e.Cancel = true;
             Hide();
             notifyIcon.ShowBalloonTip(1800, "WinPods", "Bezim v tray. Dvojklik otvori okno.", ToolTipIcon.Info);
             return;
         }
 
+        SaveWindowLayout();
         base.OnFormClosing(e);
     }
 
@@ -68,6 +95,7 @@ public partial class Form1 : Form
         RunOnUiThread(() =>
         {
             statusValueLabel.Text = e;
+            UpdateScanControls();
             UpdateTray();
         });
     }
@@ -162,6 +190,7 @@ public partial class Form1 : Form
     private void mainSplit_SplitterMoved(object sender, SplitterEventArgs e)
     {
         FitBatteryLabels();
+        SaveWindowLayout();
     }
 
     private void FitBatteryLabels()
@@ -196,16 +225,34 @@ public partial class Form1 : Form
     private void RefreshDeviceList()
     {
         var selected = selectedAddress;
-        deviceCardsPanel.SuspendLayout();
-        deviceCardsPanel.Controls.Clear();
-
-        var displayReadings = GetDisplayReadings();
-        foreach (var reading in SortReadings(displayReadings))
+        if (refreshingDeviceCards)
         {
-            deviceCardsPanel.Controls.Add(CreateDeviceCard(reading));
+            return;
         }
 
-        deviceCardsPanel.ResumeLayout();
+        refreshingDeviceCards = true;
+        SetRedraw(deviceCardsPanel, false);
+        deviceCardsPanel.SuspendLayout();
+
+        try
+        {
+            deviceCardsPanel.Controls.Clear();
+
+            var displayReadings = GetDisplayReadings();
+            foreach (var reading in SortReadings(displayReadings))
+            {
+                deviceCardsPanel.Controls.Add(CreateDeviceCard(reading));
+            }
+
+            UpdateSortButtonText();
+        }
+        finally
+        {
+            deviceCardsPanel.ResumeLayout();
+            SetRedraw(deviceCardsPanel, true);
+            deviceCardsPanel.Invalidate(true);
+            refreshingDeviceCards = false;
+        }
 
         if (selected is not null)
         {
@@ -379,6 +426,12 @@ public partial class Form1 : Form
 
     private void UpdateDeviceHint()
     {
+        if (!scanner.IsRunning)
+        {
+            deviceHintLabel.Text = "Scan paused. Start scan to find nearby AirPods.";
+            return;
+        }
+
         var count = GetDisplayReadings().Count;
         var connected = connectedBluetoothDevices.Count(IsAppleAudioDevice);
         deviceHintLabel.Text = count == 0
@@ -389,39 +442,385 @@ public partial class Form1 : Form
     private void UpdateTray()
     {
         var oldIcon = notifyIcon.Icon;
-        notifyIcon.Text = latestReading is null
-            ? "WinPods - cakam na AirPods"
-            : $"WinPods - {latestReading.Summary}";
+        var callState = callQualitySnapshot.Severity switch
+        {
+            CallQualitySeverity.Danger => "call risk",
+            CallQualitySeverity.Warning => "guard warn",
+            CallQualitySeverity.Good => "guard ok",
+            _ => null,
+        };
+        var deviceState = latestReading is null ? "cakam na AirPods" : latestReading.Summary;
+        var parts = new[] { ScanStateText().ToLowerInvariant(), callState, deviceState }
+            .Where(static part => !string.IsNullOrWhiteSpace(part));
+        SetTrayText($"WinPods - {string.Join(", ", parts)}");
         notifyIcon.Icon = TrayIconFactory.Create(latestReading is not null);
         oldIcon?.Dispose();
+    }
+
+    private void SetTrayText(string text)
+    {
+        notifyIcon.Text = text.Length <= 63 ? text : $"{text[..60]}...";
     }
 
     private void ShowWindow()
     {
         Show();
-        WindowState = FormWindowState.Normal;
+        if (WindowState == FormWindowState.Minimized)
+        {
+            WindowState = settings.WindowMaximized ? FormWindowState.Maximized : FormWindowState.Normal;
+        }
+
         Activate();
     }
 
     private void refreshMenuItem_Click(object sender, EventArgs e)
-        => RefreshScan();
+        => ToggleScan();
+
+    private async void trayTransparencyMenuItem_Click(object sender, EventArgs e)
+        => await SetListeningModeAsync(AirPodsListeningMode.Transparency);
+
+    private async void trayAdaptiveMenuItem_Click(object sender, EventArgs e)
+        => await SetListeningModeAsync(AirPodsListeningMode.Adaptive);
+
+    private async void trayNoiseCancelMenuItem_Click(object sender, EventArgs e)
+        => await SetListeningModeAsync(AirPodsListeningMode.NoiseCancellation);
+
+    private void trayCallQualityEnabledMenuItem_Click(object sender, EventArgs e)
+        => SetCallQualityGuardEnabled(trayCallQualityEnabledMenuItem.Checked);
+
+    private async void trayApplyCallQualityFixMenuItem_Click(object sender, EventArgs e)
+        => await ApplyCallQualityFixAsync();
+
+    private void trayOpenSoundSettingsMenuItem_Click(object sender, EventArgs e)
+        => OpenSoundSettings();
 
     private void refreshButton_Click(object sender, EventArgs e)
-        => RefreshScan();
+        => ToggleScan();
 
-    private void RefreshScan()
+    private void ToggleScan()
     {
-        statusValueLabel.Text = "Refreshing";
-        scanner.Stop();
+        if (scanner.IsRunning)
+        {
+            StopScan();
+            return;
+        }
+
+        StartScan();
+    }
+
+    private void StartScan()
+    {
+        statusValueLabel.Text = "Starting scan";
         scanner.Start();
+        UpdateScanControls();
         _ = RefreshConnectedDevicesAsync();
+    }
+
+    private void StopScan()
+    {
+        statusValueLabel.Text = "Stopping scan";
+        scanner.Stop();
+        UpdateScanControls();
+    }
+
+    private void UpdateScanControls()
+    {
+        var running = scanner.IsRunning;
+        refreshButton.Text = running ? "Stop scan" : "Start scan";
+        refreshButton.BackColor = running
+            ? Color.FromArgb(160, 55, 55)
+            : Color.FromArgb(36, 120, 90);
+        refreshMenuItem.Text = running ? "Stop scan" : "Start scan";
+        UpdateDeviceHint();
+    }
+
+    private string ScanStateText() => scanner.IsRunning ? "Scanning" : "Scan paused";
+
+    private void callQualityGuardTimer_Tick(object? sender, EventArgs e)
+        => QueueCallQualityGuardRefresh();
+
+    private void callQualityGuardCheckBox_CheckedChanged(object sender, EventArgs e)
+    {
+        if (!syncingCallQualityEnabled)
+        {
+            SetCallQualityGuardEnabled(callQualityGuardCheckBox.Checked);
+        }
+    }
+
+    private async void callQualityFixButton_Click(object sender, EventArgs e)
+        => await ApplyCallQualityFixAsync();
+
+    private void callQualitySettingsButton_Click(object sender, EventArgs e)
+        => OpenSoundSettings();
+
+    private void SetCallQualityGuardEnabled(bool enabled)
+    {
+        settings.CallQualityGuardEnabled = enabled;
+        settings.Save();
+        SyncCallQualityEnabledUi();
+        QueueCallQualityGuardRefresh();
+    }
+
+    private void SyncCallQualityEnabledUi()
+    {
+        syncingCallQualityEnabled = true;
+        callQualityGuardCheckBox.Checked = settings.CallQualityGuardEnabled;
+        trayCallQualityEnabledMenuItem.Checked = settings.CallQualityGuardEnabled;
+        syncingCallQualityEnabled = false;
+    }
+
+    private void QueueCallQualityGuardRefresh()
+    {
+        if (callQualityFixRunning || callQualityCheckRunning || IsDisposed)
+        {
+            return;
+        }
+
+        _ = RefreshCallQualityGuardAsync();
+    }
+
+    private async Task RefreshCallQualityGuardAsync()
+    {
+        if (callQualityFixRunning || callQualityCheckRunning || IsDisposed)
+        {
+            return;
+        }
+
+        callQualityCheckRunning = true;
+        try
+        {
+            var enabled = settings.CallQualityGuardEnabled;
+            var snapshot = await Task.Run(() => callQualityGuard.Inspect(enabled));
+            RunOnUiThread(() => ApplyCallQualitySnapshot(snapshot));
+        }
+        finally
+        {
+            callQualityCheckRunning = false;
+        }
+    }
+
+    private async Task ApplyCallQualityFixAsync()
+    {
+        if (callQualityFixRunning || !settings.CallQualityGuardEnabled)
+        {
+            return;
+        }
+
+        callQualityFixRunning = true;
+        callQualityStatusLabel.Text = "Applying recommended route...";
+        callQualityFixButton.Enabled = false;
+        trayApplyCallQualityFixMenuItem.Enabled = false;
+
+        try
+        {
+            var snapshot = await Task.Run(callQualityGuard.ApplyRecommendedRoute);
+            ApplyCallQualitySnapshot(snapshot);
+            rawValueBox.Text =
+                $"Call Quality Guard route fix.\r\n" +
+                $"Output: {snapshot.RecommendedRender?.Name ?? "none"}\r\n" +
+                $"Mic: {snapshot.RecommendedCapture?.Name ?? "none"}\r\n" +
+                $"Status: {snapshot.Status}\r\n" +
+                snapshot.Detail;
+        }
+        catch (Exception ex)
+        {
+            ApplyCallQualitySnapshot(CallQualityGuardSnapshot.Error(
+                "Route fix failed",
+                ex.Message,
+                null,
+                null,
+                callQualitySnapshot.CurrentRender,
+                callQualitySnapshot.CurrentCapture));
+            rawValueBox.Text = ex.ToString();
+        }
+        finally
+        {
+            callQualityFixRunning = false;
+            QueueCallQualityGuardRefresh();
+        }
+    }
+
+    private void ApplyCallQualitySnapshot(CallQualityGuardSnapshot snapshot)
+    {
+        callQualitySnapshot = snapshot;
+        callQualityStatusLabel.Text = snapshot.Status;
+        callQualityDetailLabel.Text = snapshot.Detail;
+        callQualityFixButton.Enabled = settings.CallQualityGuardEnabled && !callQualityFixRunning && snapshot.CanApplyFix;
+        trayApplyCallQualityFixMenuItem.Enabled = callQualityFixButton.Enabled;
+        trayCallQualityGuardMenuItem.Text = snapshot.Severity switch
+        {
+            CallQualitySeverity.Danger => "Call Quality Guard: Risk",
+            CallQualitySeverity.Warning => "Call Quality Guard: Warning",
+            CallQualitySeverity.Good => "Call Quality Guard: OK",
+            CallQualitySeverity.Disabled => "Call Quality Guard: Off",
+            CallQualitySeverity.Error => "Call Quality Guard: Error",
+            _ => "Call Quality Guard",
+        };
+
+        var (panelColor, statusColor) = snapshot.Severity switch
+        {
+            CallQualitySeverity.Danger => (Color.FromArgb(255, 241, 241), Color.FromArgb(170, 45, 45)),
+            CallQualitySeverity.Warning => (Color.FromArgb(255, 248, 226), Color.FromArgb(150, 92, 0)),
+            CallQualitySeverity.Good => (Color.FromArgb(241, 250, 246), Color.FromArgb(36, 120, 90)),
+            CallQualitySeverity.Disabled => (Color.FromArgb(246, 248, 250), Color.FromArgb(90, 98, 110)),
+            CallQualitySeverity.Error => (Color.FromArgb(255, 241, 241), Color.FromArgb(170, 45, 45)),
+            _ => (Color.FromArgb(241, 247, 252), Color.FromArgb(10, 92, 190)),
+        };
+        callQualityPanel.BackColor = panelColor;
+        callQualityStatusLabel.ForeColor = statusColor;
+
+        MaybeShowCallQualityNotification(snapshot);
+        UpdateTray();
+    }
+
+    private void MaybeShowCallQualityNotification(CallQualityGuardSnapshot snapshot)
+    {
+        if (!settings.CallQualityNotificationsEnabled || !snapshot.ShouldNotify)
+        {
+            if (snapshot.Severity is CallQualitySeverity.Good or CallQualitySeverity.Neutral)
+            {
+                lastCallQualityNotificationKey = null;
+            }
+
+            return;
+        }
+
+        var key = $"{snapshot.Severity}:{snapshot.CurrentRender?.Id}:{snapshot.CurrentCapture?.Id}";
+        if (key == lastCallQualityNotificationKey &&
+            DateTimeOffset.Now - lastCallQualityNotification < TimeSpan.FromMinutes(2))
+        {
+            return;
+        }
+
+        lastCallQualityNotificationKey = key;
+        lastCallQualityNotification = DateTimeOffset.Now;
+        notifyIcon.ShowBalloonTip(
+            4500,
+            "AirPods call audio risk",
+            "Hands-Free mode can make sound low quality. Use Fix route or select laptop mic.",
+            ToolTipIcon.Warning);
+    }
+
+    private static void OpenSoundSettings()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo("ms-settings:sound") { UseShellExecute = true });
+        }
+        catch
+        {
+            Process.Start(new ProcessStartInfo("mmsys.cpl") { UseShellExecute = true });
+        }
+    }
+
+    private void RestoreWindowLayout()
+    {
+        if (settings.WindowLeft.HasValue &&
+            settings.WindowTop.HasValue &&
+            settings.WindowWidth.HasValue &&
+            settings.WindowHeight.HasValue)
+        {
+            var bounds = new Rectangle(
+                settings.WindowLeft.Value,
+                settings.WindowTop.Value,
+                Math.Max(MinimumSize.Width, settings.WindowWidth.Value),
+                Math.Max(MinimumSize.Height, settings.WindowHeight.Value));
+
+            if (IsVisibleOnAnyScreen(bounds))
+            {
+                StartPosition = FormStartPosition.Manual;
+                Bounds = bounds;
+            }
+        }
+
+        RestoreSplitterDistance();
+    }
+
+    private void RestoreSplitterDistance()
+    {
+        if (!settings.MainSplitterDistance.HasValue)
+        {
+            return;
+        }
+
+        var min = mainSplit.Panel1MinSize;
+        var max = Math.Max(min, mainSplit.Width - mainSplit.Panel2MinSize - mainSplit.SplitterWidth);
+        mainSplit.SplitterDistance = Math.Clamp(settings.MainSplitterDistance.Value, min, max);
+    }
+
+    private void SaveWindowLayout()
+    {
+        var bounds = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+        if (bounds.Width >= MinimumSize.Width && bounds.Height >= MinimumSize.Height)
+        {
+            settings.WindowLeft = bounds.Left;
+            settings.WindowTop = bounds.Top;
+            settings.WindowWidth = bounds.Width;
+            settings.WindowHeight = bounds.Height;
+        }
+
+        settings.WindowMaximized = WindowState == FormWindowState.Maximized;
+        settings.MainSplitterDistance = mainSplit.SplitterDistance;
+        settings.Save();
+    }
+
+    private static bool IsVisibleOnAnyScreen(Rectangle bounds)
+    {
+        return Screen.AllScreens.Any(screen =>
+        {
+            var intersection = Rectangle.Intersect(screen.WorkingArea, bounds);
+            return intersection.Width >= 120 && intersection.Height >= 80;
+        });
     }
 
     private void deviceListView_SelectedIndexChanged(object sender, EventArgs e)
     {
     }
 
-    private void deviceCardsPanel_Resize(object? sender, EventArgs e) => RefreshDeviceList();
+    private void sortButton_Click(object sender, EventArgs e)
+    {
+        sortMenu.Show(sortButton, new Point(0, sortButton.Height));
+    }
+
+    private void sortSignalStrongItem_Click(object sender, EventArgs e) => SetDeviceSort(DeviceSortColumn.Signal, SortOrder.Descending);
+
+    private void sortSignalWeakItem_Click(object sender, EventArgs e) => SetDeviceSort(DeviceSortColumn.Signal, SortOrder.Ascending);
+
+    private void sortBatteryItem_Click(object sender, EventArgs e) => SetDeviceSort(DeviceSortColumn.Battery, SortOrder.Descending);
+
+    private void sortConnectedItem_Click(object sender, EventArgs e) => SetDeviceSort(DeviceSortColumn.Connected, SortOrder.Descending);
+
+    private void sortSeenItem_Click(object sender, EventArgs e) => SetDeviceSort(DeviceSortColumn.Seen, SortOrder.Descending);
+
+    private void sortNameItem_Click(object sender, EventArgs e) => SetDeviceSort(DeviceSortColumn.Name, SortOrder.Ascending);
+
+    private void SetDeviceSort(DeviceSortColumn column, SortOrder order)
+    {
+        sortColumn = column;
+        sortOrder = order;
+        SaveDeviceSort();
+        RefreshDeviceList();
+    }
+
+    private void UpdateSortButtonText()
+    {
+        sortSignalStrongItem.Checked = sortColumn == DeviceSortColumn.Signal && sortOrder == SortOrder.Descending;
+        sortSignalWeakItem.Checked = sortColumn == DeviceSortColumn.Signal && sortOrder == SortOrder.Ascending;
+        sortBatteryItem.Checked = sortColumn == DeviceSortColumn.Battery;
+        sortConnectedItem.Checked = sortColumn == DeviceSortColumn.Connected;
+        sortSeenItem.Checked = sortColumn == DeviceSortColumn.Seen;
+        sortNameItem.Checked = sortColumn == DeviceSortColumn.Name;
+
+        sortButton.Text = sortColumn switch
+        {
+            DeviceSortColumn.Signal => sortOrder == SortOrder.Descending ? "Sort: Signal down" : "Sort: Signal up",
+            DeviceSortColumn.Battery => "Sort: Battery",
+            DeviceSortColumn.Connected => "Sort: Connected",
+            DeviceSortColumn.Seen => "Sort: Last seen",
+            DeviceSortColumn.Name => "Sort: Name",
+            _ => "Sort / filter",
+        };
+    }
 
     private void openMenuItem_Click(object sender, EventArgs e) => ShowWindow();
 
@@ -750,6 +1149,13 @@ public partial class Form1 : Form
         transparencyButton.Enabled = canSend;
         adaptiveButton.Enabled = canSend;
         noiseCancelButton.Enabled = canSend;
+        trayListeningModeMenuItem.Enabled = canSend;
+        trayTransparencyMenuItem.Enabled = canSend;
+        trayAdaptiveMenuItem.Enabled = canSend;
+        trayNoiseCancelMenuItem.Enabled = canSend;
+        trayTransparencyMenuItem.Checked = currentListeningMode == AirPodsListeningMode.Transparency;
+        trayAdaptiveMenuItem.Checked = currentListeningMode == AirPodsListeningMode.Adaptive;
+        trayNoiseCancelMenuItem.Checked = currentListeningMode == AirPodsListeningMode.NoiseCancellation;
 
         StyleModeButton(transparencyButton, AirPodsListeningMode.Transparency, Color.FromArgb(241, 250, 246));
         StyleModeButton(adaptiveButton, AirPodsListeningMode.Adaptive, Color.FromArgb(241, 247, 252));
@@ -899,7 +1305,29 @@ public partial class Form1 : Form
                 : SortOrder.Descending;
         }
 
+        SaveDeviceSort();
         RefreshDeviceList();
+    }
+
+    private void RestoreDeviceSort()
+    {
+        if (Enum.TryParse<DeviceSortColumn>(settings.DeviceSortColumn, out var savedColumn))
+        {
+            sortColumn = savedColumn;
+        }
+
+        if (Enum.TryParse<SortOrder>(settings.DeviceSortOrder, out var savedOrder) &&
+            savedOrder is SortOrder.Ascending or SortOrder.Descending)
+        {
+            sortOrder = savedOrder;
+        }
+    }
+
+    private void SaveDeviceSort()
+    {
+        settings.DeviceSortColumn = sortColumn.ToString();
+        settings.DeviceSortOrder = sortOrder.ToString();
+        settings.Save();
     }
 
     private void UpdateColumnHeaders()
@@ -931,4 +1359,15 @@ public partial class Form1 : Form
         Seen = 4,
         Address = 5,
     }
+
+    private static void SetRedraw(Control control, bool enabled)
+    {
+        if (control.IsHandleCreated)
+        {
+            SendMessage(control.Handle, 0x000B, enabled ? 1 : 0, 0);
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern nint SendMessage(nint hWnd, int msg, int wParam, int lParam);
 }
