@@ -12,6 +12,7 @@ public partial class Form1 : Form
     private readonly Dictionary<string, AirPodsReading> readingsByAddress = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Windows.Forms.Timer connectedRefreshTimer = new();
     private readonly System.Windows.Forms.Timer callQualityGuardTimer = new();
+    private readonly System.Windows.Forms.Timer autoScanPauseTimer = new();
     private IReadOnlyList<ConnectedBluetoothDevice> connectedBluetoothDevices = Array.Empty<ConnectedBluetoothDevice>();
     private CallQualityGuardSnapshot callQualitySnapshot = CallQualityGuardSnapshot.Disabled();
     private AirPodsReading? latestReading;
@@ -24,11 +25,15 @@ public partial class Form1 : Form
     private bool connectedRefreshRunning;
     private bool listeningModeBusy;
     private bool exactBatteryRefreshRunning;
+    private bool scanAutoPausedInTray;
     private bool callQualityFixRunning;
     private bool callQualityCheckRunning;
     private bool syncingCallQualityEnabled;
+    private bool syncingPinnedOnly;
+    private bool syncingTheme;
     private DateTimeOffset lastExactBatteryRefresh = DateTimeOffset.MinValue;
     private DateTimeOffset lastCallQualityNotification = DateTimeOffset.MinValue;
+    private DateTimeOffset? enteredTrayAt;
     private string? lastCallQualityNotificationKey;
     private bool refreshingDeviceCards;
 
@@ -41,13 +46,18 @@ public partial class Form1 : Form
         connectedRefreshTimer.Tick += connectedRefreshTimer_Tick;
         callQualityGuardTimer.Interval = 3000;
         callQualityGuardTimer.Tick += callQualityGuardTimer_Tick;
+        autoScanPauseTimer.Interval = 5000;
+        autoScanPauseTimer.Tick += autoScanPauseTimer_Tick;
         RestoreDeviceSort();
         RestoreWindowLayout();
         SyncCallQualityEnabledUi();
+        SyncPinnedOnlyUi();
+        SyncThemeUi();
         UpdateReading(null);
         UpdateScanControls();
         UpdateListeningModeUi();
         UpdateSortButtonText();
+        ApplyTheme();
         QueueCallQualityGuardRefresh();
     }
 
@@ -66,6 +76,7 @@ public partial class Form1 : Form
             StartScan();
             connectedRefreshTimer.Start();
             callQualityGuardTimer.Start();
+            autoScanPauseTimer.Start();
             _ = RefreshConnectedDevicesAsync();
         }
     }
@@ -77,6 +88,7 @@ public partial class Form1 : Form
             SaveWindowLayout();
             e.Cancel = true;
             Hide();
+            enteredTrayAt = DateTimeOffset.Now;
             notifyIcon.ShowBalloonTip(1800, "WinPods", "Bezim v tray. Dvojklik otvori okno.", ToolTipIcon.Info);
             return;
         }
@@ -94,7 +106,9 @@ public partial class Form1 : Form
 
         RunOnUiThread(() =>
         {
-            statusValueLabel.Text = e;
+            statusValueLabel.Text = scanAutoPausedInTray && e.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
+                ? "Scan auto-paused in tray"
+                : e;
             UpdateScanControls();
             UpdateTray();
         });
@@ -114,8 +128,8 @@ public partial class Form1 : Form
 
             if (selectedAddress is null)
             {
-                selectedAddress = reading.Address;
-                SelectDeviceInList(reading.Address);
+                selectedAddress = SelectInitialAddress(reading);
+                SelectDeviceInList(selectedAddress);
             }
 
             if (reading.Address.Equals(selectedAddress, StringComparison.OrdinalIgnoreCase))
@@ -176,10 +190,37 @@ public partial class Form1 : Form
             }
         }
 
+        UpdatePinDeviceButton();
         UpdateListeningModeUi();
         UpdateTray();
         MaybeRefreshExactBattery();
     }
+
+    private bool IsDarkTheme => settings.DarkThemeEnabled;
+
+    private Color AppBack => IsDarkTheme ? Color.FromArgb(10, 10, 10) : Color.White;
+
+    private Color PanelBack => IsDarkTheme ? Color.FromArgb(17, 17, 17) : Color.FromArgb(247, 248, 250);
+
+    private Color SurfaceBack => IsDarkTheme ? Color.FromArgb(24, 24, 24) : Color.White;
+
+    private Color SoftBack => IsDarkTheme ? Color.FromArgb(32, 32, 32) : Color.FromArgb(246, 248, 250);
+
+    private Color TextMain => IsDarkTheme ? Color.FromArgb(245, 245, 245) : Color.FromArgb(28, 34, 42);
+
+    private Color TextMuted => IsDarkTheme ? Color.FromArgb(178, 178, 178) : Color.FromArgb(80, 88, 98);
+
+    private Color TextFaint => IsDarkTheme ? Color.FromArgb(145, 145, 145) : Color.FromArgb(100, 108, 120);
+
+    private Color BorderColor => IsDarkTheme ? Color.FromArgb(74, 74, 74) : Color.FromArgb(205, 213, 224);
+
+    private Color AccentColor => Color.FromArgb(10, 92, 190);
+
+    private Color AccentText => Color.White;
+
+    private Color GoodColor => IsDarkTheme ? Color.FromArgb(230, 230, 230) : Color.FromArgb(36, 120, 90);
+
+    private Color DangerColor => IsDarkTheme ? Color.FromArgb(210, 88, 88) : Color.FromArgb(160, 55, 55);
 
     protected override void OnResize(EventArgs e)
     {
@@ -279,7 +320,7 @@ public partial class Form1 : Form
             }
 
             var selected = reading.Address.Equals(address, StringComparison.OrdinalIgnoreCase);
-            control.BackColor = selected ? Color.FromArgb(24, 119, 242) : Color.FromArgb(218, 224, 232);
+            control.BackColor = selected ? AccentColor : BorderColor;
             control.Padding = selected ? new Padding(2) : new Padding(1);
 
             if (selected)
@@ -292,11 +333,20 @@ public partial class Form1 : Form
         {
             UpdateReading(fallback);
         }
+        else if (settings.ShowOnlyPinnedAirPods && selectedAddress is not null)
+        {
+            selectedAddress = GetDisplayReadings().FirstOrDefault()?.Address;
+            if (selectedAddress is not null)
+            {
+                SelectDeviceInList(selectedAddress);
+            }
+        }
     }
 
     private Control CreateDeviceCard(AirPodsReading reading)
     {
         var connected = IsReadingConnected(reading);
+        var pinned = IsPinned(reading);
         var selected = selectedAddress is not null &&
             reading.Address.Equals(selectedAddress, StringComparison.OrdinalIgnoreCase);
         const int cardWidth = 260;
@@ -305,7 +355,7 @@ public partial class Form1 : Form
             Width = cardWidth,
             Height = 312,
             Margin = new Padding(0, 0, 14, 14),
-            BackColor = selected ? Color.FromArgb(24, 119, 242) : Color.FromArgb(218, 224, 232),
+            BackColor = selected ? AccentColor : BorderColor,
             Padding = selected ? new Padding(2) : new Padding(1),
             Tag = reading,
             Cursor = Cursors.Hand,
@@ -314,7 +364,7 @@ public partial class Form1 : Form
         var inner = new Panel
         {
             Dock = DockStyle.Fill,
-            BackColor = Color.White,
+            BackColor = SurfaceBack,
             Cursor = Cursors.Hand,
         };
         card.Controls.Add(inner);
@@ -327,17 +377,25 @@ public partial class Form1 : Form
         };
         inner.Controls.Add(visual);
 
-        var model = MakeCardLabel(reading.Model, 12.5F, FontStyle.Bold, Color.FromArgb(28, 34, 42), 14, 132, cardWidth - 30, 24);
+        var model = MakeCardLabel(reading.Model, 12.5F, FontStyle.Bold, TextMain, 14, 132, cardWidth - 30, 24);
         inner.Controls.Add(model);
+        if (pinned)
+        {
+            var pin = MakeCardLabel("PINNED", 7.5F, FontStyle.Bold, Color.White, cardWidth - 78, 134, 58, 18);
+            pin.BackColor = GoodColor;
+            pin.ForeColor = AccentText;
+            pin.TextAlign = ContentAlignment.MiddleCenter;
+            inner.Controls.Add(pin);
+        }
 
-        var subTitle = MakeCardLabel(ModelGeneration(reading), 8.5F, FontStyle.Bold, Color.FromArgb(100, 108, 120), 14, 154, cardWidth - 30, 20);
+        var subTitle = MakeCardLabel(ModelGeneration(reading), 8.5F, FontStyle.Bold, TextFaint, 14, 154, cardWidth - 30, 20);
         inner.Controls.Add(subTitle);
 
         AddInfoRow(inner, "Bluetooth", connected ? "Connected" : "Not connected", connected, 182, cardWidth);
         AddBatteryBoxes(inner, reading, 224, cardWidth);
         AddInfoRow(inner, "Signal", SignalText(reading.Rssi), reading.Rssi >= -65, 284, cardWidth);
         AddInfoRow(inner, "Seen", SeenText(reading.SeenAt), true, 306, cardWidth);
-        var address = MakeCardLabel(reading.Address, 7.5F, FontStyle.Bold, Color.FromArgb(88, 96, 108), 96, 306, 145, 20);
+        var address = MakeCardLabel(reading.Address, 7.5F, FontStyle.Bold, TextFaint, 96, 306, 145, 20);
         address.TextAlign = ContentAlignment.MiddleRight;
         inner.Controls.Add(address);
 
@@ -367,10 +425,10 @@ public partial class Form1 : Form
         };
     }
 
-    private static void AddInfoRow(Control parent, string label, string value, bool greenDot, int y, int width)
+    private void AddInfoRow(Control parent, string label, string value, bool greenDot, int y, int width)
     {
-        var left = MakeCardLabel(label, 8.5F, FontStyle.Bold, Color.FromArgb(104, 112, 124), 14, y, 96, 20);
-        var right = MakeCardLabel(value, 8.5F, FontStyle.Bold, Color.FromArgb(28, 34, 42), width - 132, y, 114, 20);
+        var left = MakeCardLabel(label, 8.5F, FontStyle.Bold, TextFaint, 14, y, 96, 20);
+        var right = MakeCardLabel(value, 8.5F, FontStyle.Bold, TextMain, width - 132, y, 114, 20);
         right.TextAlign = ContentAlignment.MiddleRight;
         parent.Controls.Add(left);
         parent.Controls.Add(right);
@@ -387,9 +445,9 @@ public partial class Form1 : Form
         }
     }
 
-    private static void AddBatteryBoxes(Control parent, AirPodsReading reading, int y, int width)
+    private void AddBatteryBoxes(Control parent, AirPodsReading reading, int y, int width)
     {
-        var title = MakeCardLabel("BATTERY", 7.5F, FontStyle.Bold, Color.FromArgb(130, 138, 150), 14, y - 18, 100, 16);
+        var title = MakeCardLabel("BATTERY", 7.5F, FontStyle.Bold, TextFaint, 14, y - 18, 100, 16);
         parent.Controls.Add(title);
         var boxWidth = (width - 52) / 3;
         AddBatteryBox(parent, "Left", AirPodsReading.FormatBattery(reading.LeftBattery, reading.LeftCharging), 14, y, boxWidth);
@@ -397,18 +455,18 @@ public partial class Form1 : Form
         AddBatteryBox(parent, "Case", AirPodsReading.FormatBattery(reading.CaseBattery, reading.CaseCharging), 38 + boxWidth * 2, y, boxWidth);
     }
 
-    private static void AddBatteryBox(Control parent, string label, string value, int x, int y, int width)
+    private void AddBatteryBox(Control parent, string label, string value, int x, int y, int width)
     {
         var box = new Panel
         {
-            BackColor = Color.FromArgb(246, 248, 250),
+            BackColor = SoftBack,
             Location = new Point(x, y),
             Size = new Size(width, 44),
         };
-        var titleLabel = MakeCardLabel(label, 7.5F, FontStyle.Bold, Color.FromArgb(92, 100, 112), 0, 5, width, 16);
+        var titleLabel = MakeCardLabel(label, 7.5F, FontStyle.Bold, TextMuted, 0, 5, width, 16);
         titleLabel.TextAlign = ContentAlignment.MiddleCenter;
         box.Controls.Add(titleLabel);
-        var battery = MakeCardLabel(value, 10F, FontStyle.Bold, Color.FromArgb(28, 34, 42), 0, 20, width, 20);
+        var battery = MakeCardLabel(value, 10F, FontStyle.Bold, TextMain, 0, 20, width, 20);
         battery.TextAlign = ContentAlignment.MiddleCenter;
         box.Controls.Add(battery);
         parent.Controls.Add(box);
@@ -433,8 +491,13 @@ public partial class Form1 : Form
         }
 
         var count = GetDisplayReadings().Count;
+        var pinnedCount = settings.PinnedAirPodsAddresses.Count;
         var connected = connectedBluetoothDevices.Count(IsAppleAudioDevice);
-        deviceHintLabel.Text = count == 0
+        deviceHintLabel.Text = settings.ShowOnlyPinnedAirPods && pinnedCount > 0
+            ? $"{count} pinned AirPods shown. {connected} Windows BT connected."
+            : settings.ShowOnlyPinnedAirPods
+                ? "No pinned AirPods yet. Select AirPods and pin them."
+                : count == 0
             ? "Open AirPods case near PC."
             : $"{count} AirPods/Beats device(s) found. {connected} Windows BT connected.";
     }
@@ -465,6 +528,12 @@ public partial class Form1 : Form
     private void ShowWindow()
     {
         Show();
+        enteredTrayAt = null;
+        if (!scanner.IsRunning)
+        {
+            StartScan();
+        }
+
         if (WindowState == FormWindowState.Minimized)
         {
             WindowState = settings.WindowMaximized ? FormWindowState.Maximized : FormWindowState.Normal;
@@ -510,6 +579,7 @@ public partial class Form1 : Form
 
     private void StartScan()
     {
+        scanAutoPausedInTray = false;
         statusValueLabel.Text = "Starting scan";
         scanner.Start();
         UpdateScanControls();
@@ -528,13 +598,79 @@ public partial class Form1 : Form
         var running = scanner.IsRunning;
         refreshButton.Text = running ? "Stop scan" : "Start scan";
         refreshButton.BackColor = running
-            ? Color.FromArgb(160, 55, 55)
-            : Color.FromArgb(36, 120, 90);
+            ? DangerColor
+            : IsDarkTheme ? Color.FromArgb(245, 245, 245) : GoodColor;
+        refreshButton.ForeColor = running
+            ? Color.White
+            : IsDarkTheme ? Color.FromArgb(12, 12, 12) : Color.White;
         refreshMenuItem.Text = running ? "Stop scan" : "Start scan";
         UpdateDeviceHint();
     }
 
     private string ScanStateText() => scanner.IsRunning ? "Scanning" : "Scan paused";
+
+    private void autoScanPauseTimer_Tick(object? sender, EventArgs e)
+        => MaybeAutoPauseScan();
+
+    private void MaybeAutoPauseScan()
+    {
+        if (!scanner.IsRunning || Visible || enteredTrayAt is null)
+        {
+            return;
+        }
+
+        if (DateTimeOffset.Now - enteredTrayAt.Value < TimeSpan.FromSeconds(30))
+        {
+            return;
+        }
+
+        if (connectedBluetoothDevices.Any(IsAppleAudioDevice))
+        {
+            scanAutoPausedInTray = true;
+            StopScan();
+        }
+    }
+
+    private void pinnedOnlyCheckBox_CheckedChanged(object sender, EventArgs e)
+    {
+        if (syncingPinnedOnly)
+        {
+            return;
+        }
+
+        settings.ShowOnlyPinnedAirPods = pinnedOnlyCheckBox.Checked;
+        settings.Save();
+        RefreshDeviceList();
+    }
+
+    private void themeToggleSwitch_CheckedChanged(object sender, EventArgs e)
+    {
+        if (syncingTheme)
+        {
+            return;
+        }
+
+        settings.DarkThemeEnabled = themeToggleSwitch.Checked;
+        settings.Save();
+        ApplyTheme();
+        RefreshDeviceList();
+        UpdateScanControls();
+        UpdateListeningModeUi();
+        UpdatePinDeviceButton();
+        ApplyCallQualitySnapshot(callQualitySnapshot);
+    }
+
+    private void pinDeviceButton_Click(object sender, EventArgs e)
+    {
+        if (latestReading is null)
+        {
+            return;
+        }
+
+        TogglePinned(latestReading);
+        RefreshDeviceList();
+        UpdatePinDeviceButton();
+    }
 
     private void callQualityGuardTimer_Tick(object? sender, EventArgs e)
         => QueueCallQualityGuardRefresh();
@@ -659,15 +795,18 @@ public partial class Form1 : Form
 
         var (panelColor, statusColor) = snapshot.Severity switch
         {
-            CallQualitySeverity.Danger => (Color.FromArgb(255, 241, 241), Color.FromArgb(170, 45, 45)),
-            CallQualitySeverity.Warning => (Color.FromArgb(255, 248, 226), Color.FromArgb(150, 92, 0)),
-            CallQualitySeverity.Good => (Color.FromArgb(241, 250, 246), Color.FromArgb(36, 120, 90)),
-            CallQualitySeverity.Disabled => (Color.FromArgb(246, 248, 250), Color.FromArgb(90, 98, 110)),
-            CallQualitySeverity.Error => (Color.FromArgb(255, 241, 241), Color.FromArgb(170, 45, 45)),
-            _ => (Color.FromArgb(241, 247, 252), Color.FromArgb(10, 92, 190)),
+            CallQualitySeverity.Danger => (IsDarkTheme ? Color.FromArgb(42, 24, 24) : Color.FromArgb(255, 241, 241), IsDarkTheme ? Color.FromArgb(255, 148, 148) : Color.FromArgb(170, 45, 45)),
+            CallQualitySeverity.Warning => (IsDarkTheme ? Color.FromArgb(44, 35, 18) : Color.FromArgb(255, 248, 226), IsDarkTheme ? Color.FromArgb(255, 204, 102) : Color.FromArgb(150, 92, 0)),
+            CallQualitySeverity.Good => (IsDarkTheme ? Color.FromArgb(26, 36, 30) : Color.FromArgb(241, 250, 246), GoodColor),
+            CallQualitySeverity.Disabled => (SoftBack, TextMuted),
+            CallQualitySeverity.Error => (IsDarkTheme ? Color.FromArgb(42, 24, 24) : Color.FromArgb(255, 241, 241), IsDarkTheme ? Color.FromArgb(255, 148, 148) : Color.FromArgb(170, 45, 45)),
+            _ => (IsDarkTheme ? Color.FromArgb(24, 32, 42) : Color.FromArgb(241, 247, 252), AccentColor),
         };
         callQualityPanel.BackColor = panelColor;
         callQualityStatusLabel.ForeColor = statusColor;
+        callQualityTitleLabel.ForeColor = TextMain;
+        callQualityDetailLabel.ForeColor = TextMuted;
+        ApplyCheckBoxTheme(callQualityGuardCheckBox, callQualityPanel.BackColor);
 
         MaybeShowCallQualityNotification(snapshot);
         UpdateTray();
@@ -711,6 +850,185 @@ public partial class Form1 : Form
         {
             Process.Start(new ProcessStartInfo("mmsys.cpl") { UseShellExecute = true });
         }
+    }
+
+    private void SyncPinnedOnlyUi()
+    {
+        syncingPinnedOnly = true;
+        pinnedOnlyCheckBox.Checked = settings.ShowOnlyPinnedAirPods;
+        syncingPinnedOnly = false;
+    }
+
+    private void SyncThemeUi()
+    {
+        syncingTheme = true;
+        themeToggleSwitch.Checked = settings.DarkThemeEnabled;
+        syncingTheme = false;
+    }
+
+    private void ApplyTheme()
+    {
+        BackColor = AppBack;
+        rootLayout.BackColor = AppBack;
+        headerPanel.BackColor = AppBack;
+        titleLabel.ForeColor = TextMain;
+        subtitleLabel.ForeColor = TextMuted;
+        themeLabel.ForeColor = TextMuted;
+
+        themeToggleSwitch.TrackOn = Color.FromArgb(245, 245, 245);
+        themeToggleSwitch.TrackOff = Color.White;
+        themeToggleSwitch.KnobOn = Color.FromArgb(15, 15, 15);
+        themeToggleSwitch.KnobOff = Color.FromArgb(20, 20, 20);
+        themeToggleSwitch.BorderColor = BorderColor;
+        themeToggleSwitch.Invalidate();
+
+        devicesPanel.BackColor = PanelBack;
+        deviceCardsPanel.BackColor = PanelBack;
+        detailPanel.BackColor = SurfaceBack;
+        detailContentPanel.BackColor = SurfaceBack;
+        rawValueBox.BackColor = IsDarkTheme ? Color.FromArgb(14, 14, 14) : Color.FromArgb(250, 251, 252);
+        rawValueBox.ForeColor = TextMain;
+
+        foreach (var label in AllLabels(this))
+        {
+            if (label == titleLabel)
+            {
+                label.ForeColor = TextMain;
+            }
+            else if (label == connectedValueLabel)
+            {
+                label.ForeColor = AccentColor;
+            }
+            else if (label.Font.Bold)
+            {
+                label.ForeColor = label.Font.Size >= 12 ? TextMain : TextMuted;
+            }
+            else
+            {
+                label.ForeColor = TextMuted;
+            }
+        }
+
+        ApplyButtonTheme(sortButton, false);
+        ApplyButtonTheme(pinDeviceButton, false);
+        ApplyButtonTheme(callQualitySettingsButton, false);
+        ApplyButtonTheme(callQualityFixButton, true);
+
+        pinnedOnlyCheckBox.ForeColor = TextMuted;
+        ApplyCheckBoxTheme(pinnedOnlyCheckBox, PanelBack);
+        callQualityGuardCheckBox.ForeColor = TextMuted;
+        ApplyCheckBoxTheme(callQualityGuardCheckBox, callQualityPanel.BackColor);
+
+        leftBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(28, 28, 28) : Color.FromArgb(241, 250, 246);
+        rightBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(32, 32, 32) : Color.FromArgb(241, 247, 252);
+        caseBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(36, 36, 36) : Color.FromArgb(252, 248, 240);
+    }
+
+    private void ApplyButtonTheme(Button button, bool primary)
+    {
+        button.BackColor = primary ? AccentColor : SurfaceBack;
+        button.ForeColor = primary ? AccentText : TextMain;
+        button.FlatAppearance.BorderColor = BorderColor;
+        button.UseVisualStyleBackColor = false;
+    }
+
+    private void ApplyCheckBoxTheme(CheckBox checkBox, Color backColor)
+    {
+        checkBox.BackColor = backColor;
+        checkBox.ForeColor = TextMuted;
+        checkBox.FlatStyle = FlatStyle.Flat;
+        checkBox.FlatAppearance.BorderColor = BorderColor;
+        checkBox.FlatAppearance.CheckedBackColor = AccentColor;
+        checkBox.FlatAppearance.MouseDownBackColor = SoftBack;
+        checkBox.FlatAppearance.MouseOverBackColor = SoftBack;
+        checkBox.UseVisualStyleBackColor = false;
+    }
+
+    private static IEnumerable<Label> AllLabels(Control root)
+    {
+        foreach (Control child in root.Controls)
+        {
+            if (child is Label label)
+            {
+                yield return label;
+            }
+
+            foreach (var nested in AllLabels(child))
+            {
+                yield return nested;
+            }
+        }
+    }
+
+    private string SelectInitialAddress(AirPodsReading fallback)
+    {
+        var pinned = readingsByAddress.Values
+            .Where(IsPinned)
+            .OrderByDescending(IsReadingConnected)
+            .ThenByDescending(static reading => reading.Rssi)
+            .ThenByDescending(static reading => reading.SeenAt)
+            .FirstOrDefault();
+
+        return pinned?.Address ?? fallback.Address;
+    }
+
+    private void TogglePinned(AirPodsReading reading)
+    {
+        var address = NormalizeAddress(reading.Address);
+        var pinned = settings.PinnedAirPodsAddresses;
+        if (pinned.Any(item => item.Equals(address, StringComparison.OrdinalIgnoreCase)))
+        {
+            settings.PinnedAirPodsAddresses = pinned
+                .Where(item => !item.Equals(address, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        else
+        {
+            pinned.Add(address);
+            settings.PinnedAirPodsAddresses = pinned
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        settings.Save();
+    }
+
+    private bool IsPinned(AirPodsReading reading)
+    {
+        var address = NormalizeAddress(reading.Address);
+        return settings.PinnedAirPodsAddresses.Any(item =>
+            item.Equals(address, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeAddress(string address) =>
+        address.Replace(":", "", StringComparison.Ordinal)
+            .Replace("-", "", StringComparison.Ordinal)
+            .Trim()
+            .ToUpperInvariant();
+
+    private void UpdatePinDeviceButton()
+    {
+        if (latestReading is null)
+        {
+            pinDeviceButton.Enabled = false;
+            pinDeviceButton.Text = "Pin as mine";
+            pinDeviceButton.BackColor = IsDarkTheme ? Color.FromArgb(38, 38, 38) : Color.FromArgb(238, 240, 244);
+            pinDeviceButton.ForeColor = TextFaint;
+            pinDeviceButton.FlatAppearance.BorderColor = BorderColor;
+            return;
+        }
+
+        var pinned = IsPinned(latestReading);
+        pinDeviceButton.Enabled = true;
+        pinDeviceButton.Text = pinned ? "Unpin mine" : "Pin as mine";
+        pinDeviceButton.BackColor = pinned
+            ? IsDarkTheme ? Color.FromArgb(245, 245, 245) : GoodColor
+            : SurfaceBack;
+        pinDeviceButton.ForeColor = pinned
+            ? IsDarkTheme ? Color.FromArgb(12, 12, 12) : Color.White
+            : TextMain;
+        pinDeviceButton.FlatAppearance.BorderColor = BorderColor;
     }
 
     private void RestoreWindowLayout()
@@ -959,7 +1277,13 @@ public partial class Form1 : Form
             }
         }
 
-        return groups.Select(MergeReadings).ToList();
+        var merged = groups.Select(MergeReadings).ToList();
+        if (settings.ShowOnlyPinnedAirPods && settings.PinnedAirPodsAddresses.Count > 0)
+        {
+            merged = merged.Where(IsPinned).ToList();
+        }
+
+        return merged;
     }
 
     private bool ShouldMergeReadings(AirPodsReading a, AirPodsReading b)
@@ -980,7 +1304,8 @@ public partial class Form1 : Form
     private AirPodsReading MergeReadings(List<AirPodsReading> group)
     {
         var primary = group
-            .OrderByDescending(IsReadingConnected)
+            .OrderByDescending(IsPinned)
+            .ThenByDescending(IsReadingConnected)
             .ThenByDescending(static reading => reading.Rssi)
             .ThenByDescending(static reading => reading.SeenAt)
             .First();
@@ -1170,9 +1495,9 @@ public partial class Form1 : Form
     private void StyleModeButton(Button button, AirPodsListeningMode mode, Color idleColor)
     {
         var active = currentListeningMode == mode;
-        button.BackColor = active ? Color.FromArgb(10, 92, 190) : idleColor;
-        button.ForeColor = active ? Color.White : Color.FromArgb(28, 34, 42);
-        button.FlatAppearance.BorderColor = active ? Color.FromArgb(10, 92, 190) : Color.FromArgb(205, 213, 224);
+        button.BackColor = active ? AccentColor : IsDarkTheme ? SoftBack : idleColor;
+        button.ForeColor = active ? AccentText : TextMain;
+        button.FlatAppearance.BorderColor = active ? AccentColor : BorderColor;
     }
 
     private static string DisplayMode(AirPodsListeningMode mode) =>
@@ -1271,7 +1596,7 @@ public partial class Form1 : Form
 
     private IEnumerable<AirPodsReading> SortReadings(IEnumerable<AirPodsReading> readings)
     {
-        return sortColumn switch
+        var sorted = sortColumn switch
         {
             DeviceSortColumn.Name => ApplySort(readings, static r => r.Model),
             DeviceSortColumn.Connected => ApplySort(readings, r => IsReadingConnected(r)),
@@ -1281,6 +1606,8 @@ public partial class Form1 : Form
             DeviceSortColumn.Address => ApplySort(readings, static r => r.Address),
             _ => readings,
         };
+
+        return sorted.OrderByDescending(IsPinned);
     }
 
     private IEnumerable<AirPodsReading> ApplySort<TKey>(IEnumerable<AirPodsReading> readings, Func<AirPodsReading, TKey> keySelector)

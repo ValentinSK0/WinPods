@@ -26,6 +26,12 @@ public sealed class WinPodsSettings
 
     public string? DeviceSortOrder { get; set; }
 
+    public List<string> PinnedAirPodsAddresses { get; set; } = [];
+
+    public bool ShowOnlyPinnedAirPods { get; set; }
+
+    public bool DarkThemeEnabled { get; set; }
+
     public static WinPodsSettings Load()
     {
         try
@@ -36,7 +42,9 @@ public sealed class WinPodsSettings
                 return new WinPodsSettings();
             }
 
-            return JsonSerializer.Deserialize<WinPodsSettings>(File.ReadAllText(path)) ?? new WinPodsSettings();
+            var settings = JsonSerializer.Deserialize<WinPodsSettings>(File.ReadAllText(path)) ?? new WinPodsSettings();
+            settings.PinnedAirPodsAddresses ??= [];
+            return settings;
         }
         catch
         {

@@ -7,12 +7,15 @@ partial class Form1
     private Panel headerPanel;
     private Label titleLabel;
     private Label subtitleLabel;
+    private Label themeLabel;
+    private ThemeToggleSwitch themeToggleSwitch;
     private Button refreshButton;
     private SplitContainer mainSplit;
     private Panel devicesPanel;
     private Label devicesTitleLabel;
     private Label deviceHintLabel;
     private Button sortButton;
+    private CheckBox pinnedOnlyCheckBox;
     private ContextMenuStrip sortMenu;
     private ToolStripMenuItem sortSignalStrongItem;
     private ToolStripMenuItem sortSignalWeakItem;
@@ -43,6 +46,7 @@ partial class Form1
     private Label caseLabel;
     private Label caseBatteryLabel;
     private Label listeningModeLabel;
+    private Button pinDeviceButton;
     private TableLayoutPanel listeningModePanel;
     private Button transparencyButton;
     private Button adaptiveButton;
@@ -86,6 +90,7 @@ partial class Form1
         {
             connectedRefreshTimer.Dispose();
             callQualityGuardTimer.Dispose();
+            autoScanPauseTimer.Dispose();
             scanner.Dispose();
             components.Dispose();
         }
@@ -100,12 +105,15 @@ partial class Form1
         headerPanel = new Panel();
         titleLabel = new Label();
         subtitleLabel = new Label();
+        themeLabel = new Label();
+        themeToggleSwitch = new ThemeToggleSwitch();
         refreshButton = new Button();
         mainSplit = new SplitContainer();
         devicesPanel = new Panel();
         devicesTitleLabel = new Label();
         deviceHintLabel = new Label();
         sortButton = new Button();
+        pinnedOnlyCheckBox = new CheckBox();
         sortMenu = new ContextMenuStrip(components);
         sortSignalStrongItem = new ToolStripMenuItem();
         sortSignalWeakItem = new ToolStripMenuItem();
@@ -136,6 +144,7 @@ partial class Form1
         caseLabel = new Label();
         caseBatteryLabel = new Label();
         listeningModeLabel = new Label();
+        pinDeviceButton = new Button();
         listeningModePanel = new TableLayoutPanel();
         transparencyButton = new Button();
         adaptiveButton = new Button();
@@ -204,6 +213,8 @@ partial class Form1
         rootLayout.TabIndex = 0;
         headerPanel.Controls.Add(titleLabel);
         headerPanel.Controls.Add(subtitleLabel);
+        headerPanel.Controls.Add(themeToggleSwitch);
+        headerPanel.Controls.Add(themeLabel);
         headerPanel.Controls.Add(refreshButton);
         headerPanel.Dock = DockStyle.Fill;
         headerPanel.Location = new Point(0, 0);
@@ -225,6 +236,24 @@ partial class Form1
         subtitleLabel.Size = new Size(243, 15);
         subtitleLabel.TabIndex = 1;
         subtitleLabel.Text = "Select your AirPods, then keep app in tray.";
+        themeLabel.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        themeLabel.AutoEllipsis = false;
+        themeLabel.AutoSize = false;
+        themeLabel.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+        themeLabel.ForeColor = Color.FromArgb(80, 88, 98);
+        themeLabel.Location = new Point(750, 18);
+        themeLabel.Name = "themeLabel";
+        themeLabel.Size = new Size(96, 19);
+        themeLabel.TabIndex = 2;
+        themeLabel.Text = "Black theme";
+        themeLabel.TextAlign = ContentAlignment.MiddleRight;
+        themeToggleSwitch.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        themeToggleSwitch.BorderColor = Color.FromArgb(80, 88, 98);
+        themeToggleSwitch.Location = new Point(858, 14);
+        themeToggleSwitch.Name = "themeToggleSwitch";
+        themeToggleSwitch.Size = new Size(54, 28);
+        themeToggleSwitch.TabIndex = 3;
+        themeToggleSwitch.CheckedChanged += themeToggleSwitch_CheckedChanged;
         refreshButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         refreshButton.BackColor = Color.FromArgb(36, 120, 90);
         refreshButton.FlatAppearance.BorderSize = 0;
@@ -234,7 +263,7 @@ partial class Form1
         refreshButton.Location = new Point(934, 10);
         refreshButton.Name = "refreshButton";
         refreshButton.Size = new Size(128, 38);
-        refreshButton.TabIndex = 2;
+        refreshButton.TabIndex = 4;
         refreshButton.Text = "Stop scan";
         refreshButton.UseVisualStyleBackColor = false;
         refreshButton.Click += refreshButton_Click;
@@ -255,6 +284,7 @@ partial class Form1
         devicesPanel.BackColor = Color.FromArgb(247, 248, 250);
         devicesPanel.Controls.Add(deviceCardsPanel);
         devicesPanel.Controls.Add(sortButton);
+        devicesPanel.Controls.Add(pinnedOnlyCheckBox);
         devicesPanel.Controls.Add(deviceHintLabel);
         devicesPanel.Controls.Add(devicesTitleLabel);
         devicesPanel.Dock = DockStyle.Fill;
@@ -305,6 +335,17 @@ partial class Form1
         sortSeenItem.Click += sortSeenItem_Click;
         sortNameItem.Text = "Name: A to Z";
         sortNameItem.Click += sortNameItem_Click;
+        pinnedOnlyCheckBox.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        pinnedOnlyCheckBox.AutoSize = true;
+        pinnedOnlyCheckBox.Font = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+        pinnedOnlyCheckBox.ForeColor = Color.FromArgb(80, 88, 98);
+        pinnedOnlyCheckBox.Location = new Point(422, 10);
+        pinnedOnlyCheckBox.Name = "pinnedOnlyCheckBox";
+        pinnedOnlyCheckBox.Size = new Size(121, 19);
+        pinnedOnlyCheckBox.TabIndex = 3;
+        pinnedOnlyCheckBox.Text = "Only my AirPods";
+        pinnedOnlyCheckBox.UseVisualStyleBackColor = true;
+        pinnedOnlyCheckBox.CheckedChanged += pinnedOnlyCheckBox_CheckedChanged;
         deviceCardsPanel.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
         deviceCardsPanel.AutoScroll = true;
         deviceCardsPanel.BackColor = Color.FromArgb(247, 248, 250);
@@ -355,6 +396,7 @@ partial class Form1
         detailContentPanel.Controls.Add(callQualityPanel);
         detailContentPanel.Controls.Add(listeningModeStatusLabel);
         detailContentPanel.Controls.Add(listeningModePanel);
+        detailContentPanel.Controls.Add(pinDeviceButton);
         detailContentPanel.Controls.Add(listeningModeLabel);
         detailContentPanel.Controls.Add(batteryGrid);
         detailContentPanel.Controls.Add(modelValueLabel);
@@ -468,6 +510,19 @@ partial class Form1
         listeningModeLabel.Size = new Size(102, 19);
         listeningModeLabel.TabIndex = 3;
         listeningModeLabel.Text = "Listening mode";
+        pinDeviceButton.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        pinDeviceButton.BackColor = Color.White;
+        pinDeviceButton.FlatAppearance.BorderColor = Color.FromArgb(205, 213, 224);
+        pinDeviceButton.FlatStyle = FlatStyle.Flat;
+        pinDeviceButton.Font = new Font("Segoe UI", 8.5F, FontStyle.Bold);
+        pinDeviceButton.ForeColor = Color.FromArgb(28, 34, 42);
+        pinDeviceButton.Location = new Point(314, 216);
+        pinDeviceButton.Name = "pinDeviceButton";
+        pinDeviceButton.Size = new Size(130, 28);
+        pinDeviceButton.TabIndex = 4;
+        pinDeviceButton.Text = "Pin as mine";
+        pinDeviceButton.UseVisualStyleBackColor = false;
+        pinDeviceButton.Click += pinDeviceButton_Click;
         listeningModePanel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         listeningModePanel.ColumnCount = 3;
         listeningModePanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3333321F));
@@ -481,7 +536,7 @@ partial class Form1
         listeningModePanel.RowCount = 1;
         listeningModePanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
         listeningModePanel.Size = new Size(424, 48);
-        listeningModePanel.TabIndex = 4;
+        listeningModePanel.TabIndex = 5;
         foreach (var button in new[] { transparencyButton, adaptiveButton, noiseCancelButton })
         {
             button.Dock = DockStyle.Fill;
@@ -546,7 +601,7 @@ partial class Form1
         callQualityGuardCheckBox.Size = new Size(68, 19);
         callQualityGuardCheckBox.TabIndex = 1;
         callQualityGuardCheckBox.Text = "Enabled";
-        callQualityGuardCheckBox.UseVisualStyleBackColor = true;
+        callQualityGuardCheckBox.UseVisualStyleBackColor = false;
         callQualityGuardCheckBox.CheckedChanged += callQualityGuardCheckBox_CheckedChanged;
         callQualityStatusLabel.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
         callQualityStatusLabel.AutoEllipsis = true;
