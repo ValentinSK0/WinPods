@@ -827,9 +827,7 @@ public partial class Form1 : Form
         };
         callQualityPanel.BackColor = panelColor;
         callQualityPanel.FillColor = panelColor;
-        callQualityPanel.FillColor2 = IsDarkTheme
-            ? ControlPaint.Light(panelColor, 0.08f)
-            : ControlPaint.Light(panelColor, 0.35f);
+        callQualityPanel.FillColor2 = IsDarkTheme ? panelColor : ControlPaint.Light(panelColor, 0.25f);
         callQualityPanel.BorderColor = BorderColor;
         callQualityPanel.Invalidate();
         callQualityStatusLabel.ForeColor = statusColor;
@@ -920,6 +918,7 @@ public partial class Form1 : Form
 
         foreach (var label in AllLabels(this))
         {
+            label.BackColor = Color.Transparent;
             if (label == titleLabel)
             {
                 label.ForeColor = TextMain;
@@ -953,11 +952,11 @@ public partial class Form1 : Form
         ApplyCheckBoxTheme(callQualityGuardCheckBox, callQualityPanel.BackColor);
 
         leftBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(28, 28, 28) : Color.FromArgb(241, 250, 246);
-        ApplyModernPanelTheme(leftBatteryPanel, IsDarkTheme ? Color.FromArgb(28, 28, 28) : Color.FromArgb(245, 252, 249), IsDarkTheme ? Color.FromArgb(36, 36, 36) : Color.FromArgb(235, 247, 241));
+        ApplyModernPanelTheme(leftBatteryPanel, IsDarkTheme ? Color.FromArgb(28, 28, 28) : Color.FromArgb(245, 252, 249), IsDarkTheme ? Color.FromArgb(28, 28, 28) : Color.FromArgb(235, 247, 241));
         rightBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(32, 32, 32) : Color.FromArgb(241, 247, 252);
-        ApplyModernPanelTheme(rightBatteryPanel, IsDarkTheme ? Color.FromArgb(30, 30, 32) : Color.FromArgb(246, 250, 253), IsDarkTheme ? Color.FromArgb(38, 38, 40) : Color.FromArgb(235, 244, 251));
+        ApplyModernPanelTheme(rightBatteryPanel, IsDarkTheme ? Color.FromArgb(30, 30, 32) : Color.FromArgb(246, 250, 253), IsDarkTheme ? Color.FromArgb(30, 30, 32) : Color.FromArgb(235, 244, 251));
         caseBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(36, 36, 36) : Color.FromArgb(252, 248, 240);
-        ApplyModernPanelTheme(caseBatteryPanel, IsDarkTheme ? Color.FromArgb(34, 34, 34) : Color.FromArgb(253, 250, 245), IsDarkTheme ? Color.FromArgb(42, 42, 42) : Color.FromArgb(249, 242, 229));
+        ApplyModernPanelTheme(caseBatteryPanel, IsDarkTheme ? Color.FromArgb(34, 34, 34) : Color.FromArgb(253, 250, 245), IsDarkTheme ? Color.FromArgb(34, 34, 34) : Color.FromArgb(249, 242, 229));
     }
 
     private void ApplyButtonTheme(Button button, bool primary)
@@ -971,7 +970,9 @@ public partial class Form1 : Form
     {
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 0;
-        button.FlatAppearance.BorderColor = button.BackColor;
+        button.FlatAppearance.BorderColor = button.BackColor == Color.Transparent
+            ? BorderColor
+            : button.BackColor;
         button.UseVisualStyleBackColor = false;
         ApplyRoundedRegion(button, Math.Min(14, Math.Max(8, button.Height / 2)));
     }
@@ -1022,6 +1023,7 @@ public partial class Form1 : Form
 
     private void ApplyModernPanelTheme(ModernPanel panel, Color fill, Color fill2)
     {
+        panel.BackColor = fill;
         panel.FillColor = fill;
         panel.FillColor2 = fill2;
         panel.BorderColor = BorderColor;
@@ -1606,7 +1608,7 @@ public partial class Form1 : Form
             adaptiveModeButton.BorderColor = BorderColor;
         }
 
-        button.BackColor = adaptiveGradient ? Color.Transparent : active ? AccentColor : IsDarkTheme ? SoftBack : idleColor;
+        button.BackColor = adaptiveGradient ? SurfaceBack : active ? AccentColor : IsDarkTheme ? SoftBack : idleColor;
         button.ForeColor = adaptiveGradient ? Color.White : active ? AccentText : TextMain;
         PrepareRoundedButton(button);
         button.Invalidate();
