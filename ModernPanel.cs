@@ -46,4 +46,40 @@ public sealed class ModernPanel : Panel
             e.Graphics.DrawRoundedRectangle(border, bounds, Radius);
         }
     }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        ApplyRegion();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ApplyRegion();
+    }
+
+    private void ApplyRegion()
+    {
+        if (Width <= 0 || Height <= 0)
+        {
+            return;
+        }
+
+        using var path = CreateRoundedRectanglePath(new Rectangle(0, 0, Width, Height), Radius);
+        Region?.Dispose();
+        Region = new Region(path);
+    }
+
+    private static GraphicsPath CreateRoundedRectanglePath(Rectangle bounds, int radius)
+    {
+        var diameter = Math.Max(2, radius * 2);
+        var path = new GraphicsPath();
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
 }

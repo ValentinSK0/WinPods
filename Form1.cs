@@ -226,6 +226,7 @@ public partial class Form1 : Form
     {
         base.OnResize(e);
         FitBatteryLabels();
+        RefreshRoundedButtonRegions();
     }
 
     private void mainSplit_SplitterMoved(object sender, SplitterEventArgs e)
@@ -329,7 +330,7 @@ public partial class Form1 : Form
                 panel.Invalidate();
             }
 
-            control.Padding = selected ? new Padding(2) : new Padding(1);
+            control.Padding = selected ? new Padding(3) : new Padding(1);
 
             if (selected)
             {
@@ -367,8 +368,8 @@ public partial class Form1 : Form
             BorderColor = selected ? AccentColor : BorderColor,
             FillColor = selected ? AccentColor : BorderColor,
             FillColor2 = selected ? AccentColor : BorderColor,
-            Padding = selected ? new Padding(2) : new Padding(1),
-            Radius = 24,
+            Padding = selected ? new Padding(3) : new Padding(1),
+            Radius = 28,
             Tag = reading,
             Cursor = Cursors.Hand,
         };
@@ -381,7 +382,7 @@ public partial class Form1 : Form
             DrawBorder = false,
             FillColor = SurfaceBack,
             FillColor2 = IsDarkTheme ? Color.FromArgb(30, 30, 30) : Color.FromArgb(252, 253, 255),
-            Radius = 22,
+            Radius = 24,
             Cursor = Cursors.Hand,
         };
         card.Controls.Add(inner);
@@ -624,6 +625,7 @@ public partial class Form1 : Form
         refreshButton.ForeColor = running
             ? Color.White
             : IsDarkTheme ? Color.FromArgb(12, 12, 12) : Color.White;
+        PrepareRoundedButton(refreshButton);
         refreshMenuItem.Text = running ? "Stop scan" : "Start scan";
         UpdateDeviceHint();
     }
@@ -962,8 +964,24 @@ public partial class Form1 : Form
     {
         button.BackColor = primary ? AccentColor : SurfaceBack;
         button.ForeColor = primary ? AccentText : TextMain;
-        button.FlatAppearance.BorderColor = BorderColor;
+        PrepareRoundedButton(button);
+    }
+
+    private void PrepareRoundedButton(Button button)
+    {
+        button.FlatStyle = FlatStyle.Flat;
+        button.FlatAppearance.BorderSize = 0;
+        button.FlatAppearance.BorderColor = button.BackColor;
         button.UseVisualStyleBackColor = false;
+        ApplyRoundedRegion(button, Math.Min(14, Math.Max(8, button.Height / 2)));
+    }
+
+    private void RefreshRoundedButtonRegions()
+    {
+        foreach (var button in new[] { refreshButton, sortButton, pinDeviceButton, callQualityFixButton, callQualitySettingsButton, transparencyButton, adaptiveButton, noiseCancelButton })
+        {
+            PrepareRoundedButton(button);
+        }
     }
 
     private static void ApplyRoundedRegion(Control control, int radius)
@@ -1040,17 +1058,23 @@ public partial class Form1 : Form
 
     private void TogglePinned(AirPodsReading reading)
     {
-        var address = NormalizeAddress(reading.Address);
+        var addresses = GetRelatedReadings(reading)
+            .Select(static item => NormalizeAddress(item.Address))
+            .Append(NormalizeAddress(reading.Address))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var pinned = settings.PinnedAirPodsAddresses;
-        if (pinned.Any(item => item.Equals(address, StringComparison.OrdinalIgnoreCase)))
+        var shouldUnpin = addresses.Any(address =>
+            pinned.Any(item => item.Equals(address, StringComparison.OrdinalIgnoreCase)));
+        if (shouldUnpin)
         {
             settings.PinnedAirPodsAddresses = pinned
-                .Where(item => !item.Equals(address, StringComparison.OrdinalIgnoreCase))
+                .Where(item => !addresses.Any(address => item.Equals(address, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
         }
         else
         {
-            pinned.Add(address);
+            pinned.AddRange(addresses);
             settings.PinnedAirPodsAddresses = pinned
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
@@ -1063,8 +1087,22 @@ public partial class Form1 : Form
     private bool IsPinned(AirPodsReading reading)
     {
         var address = NormalizeAddress(reading.Address);
-        return settings.PinnedAirPodsAddresses.Any(item =>
-            item.Equals(address, StringComparison.OrdinalIgnoreCase));
+        if (settings.PinnedAirPodsAddresses.Any(item =>
+            item.Equals(address, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return GetRelatedReadings(reading).Any(related =>
+            settings.PinnedAirPodsAddresses.Any(item =>
+                item.Equals(NormalizeAddress(related.Address), StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private IEnumerable<AirPodsReading> GetRelatedReadings(AirPodsReading reading)
+    {
+        return readingsByAddress.Values.Where(candidate =>
+            candidate.Address.Equals(reading.Address, StringComparison.OrdinalIgnoreCase) ||
+            ShouldMergeReadings(candidate, reading));
     }
 
     private static string NormalizeAddress(string address) =>
@@ -1081,7 +1119,7 @@ public partial class Form1 : Form
             pinDeviceButton.Text = "Pin as mine";
             pinDeviceButton.BackColor = IsDarkTheme ? Color.FromArgb(38, 38, 38) : Color.FromArgb(238, 240, 244);
             pinDeviceButton.ForeColor = TextFaint;
-            pinDeviceButton.FlatAppearance.BorderColor = BorderColor;
+            PrepareRoundedButton(pinDeviceButton);
             return;
         }
 
@@ -1094,7 +1132,7 @@ public partial class Form1 : Form
         pinDeviceButton.ForeColor = pinned
             ? IsDarkTheme ? Color.FromArgb(12, 12, 12) : Color.White
             : TextMain;
-        pinDeviceButton.FlatAppearance.BorderColor = BorderColor;
+        PrepareRoundedButton(pinDeviceButton);
     }
 
     private void RestoreWindowLayout()
@@ -1370,8 +1408,8 @@ public partial class Form1 : Form
     private AirPodsReading MergeReadings(List<AirPodsReading> group)
     {
         var primary = group
-            .OrderByDescending(IsPinned)
-            .ThenByDescending(IsReadingConnected)
+            .OrderByDescending(IsReadingConnected)
+            .ThenByDescending(IsPinned)
             .ThenByDescending(static reading => reading.Rssi)
             .ThenByDescending(static reading => reading.SeenAt)
             .First();
@@ -1563,7 +1601,7 @@ public partial class Form1 : Form
         var active = currentListeningMode == mode;
         button.BackColor = active ? AccentColor : IsDarkTheme ? SoftBack : idleColor;
         button.ForeColor = active ? AccentText : TextMain;
-        button.FlatAppearance.BorderColor = active ? AccentColor : BorderColor;
+        PrepareRoundedButton(button);
     }
 
     private static string DisplayMode(AirPodsListeningMode mode) =>
