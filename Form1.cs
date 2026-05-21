@@ -321,6 +321,14 @@ public partial class Form1 : Form
 
             var selected = reading.Address.Equals(address, StringComparison.OrdinalIgnoreCase);
             control.BackColor = selected ? AccentColor : BorderColor;
+            if (control is ModernPanel panel)
+            {
+                panel.BorderColor = selected ? AccentColor : BorderColor;
+                panel.FillColor = selected ? AccentColor : BorderColor;
+                panel.FillColor2 = selected ? AccentColor : BorderColor;
+                panel.Invalidate();
+            }
+
             control.Padding = selected ? new Padding(2) : new Padding(1);
 
             if (selected)
@@ -350,21 +358,30 @@ public partial class Form1 : Form
         var selected = selectedAddress is not null &&
             reading.Address.Equals(selectedAddress, StringComparison.OrdinalIgnoreCase);
         const int cardWidth = 260;
-        var card = new Panel
+        var card = new ModernPanel
         {
             Width = cardWidth,
             Height = 312,
             Margin = new Padding(0, 0, 14, 14),
             BackColor = selected ? AccentColor : BorderColor,
+            BorderColor = selected ? AccentColor : BorderColor,
+            FillColor = selected ? AccentColor : BorderColor,
+            FillColor2 = selected ? AccentColor : BorderColor,
             Padding = selected ? new Padding(2) : new Padding(1),
+            Radius = 24,
             Tag = reading,
             Cursor = Cursors.Hand,
         };
 
-        var inner = new Panel
+        var inner = new ModernPanel
         {
             Dock = DockStyle.Fill,
             BackColor = SurfaceBack,
+            BorderColor = Color.Transparent,
+            DrawBorder = false,
+            FillColor = SurfaceBack,
+            FillColor2 = IsDarkTheme ? Color.FromArgb(30, 30, 30) : Color.FromArgb(252, 253, 255),
+            Radius = 22,
             Cursor = Cursors.Hand,
         };
         card.Controls.Add(inner);
@@ -457,10 +474,14 @@ public partial class Form1 : Form
 
     private void AddBatteryBox(Control parent, string label, string value, int x, int y, int width)
     {
-        var box = new Panel
+        var box = new ModernPanel
         {
             BackColor = SoftBack,
+            BorderColor = BorderColor,
+            FillColor = SoftBack,
+            FillColor2 = IsDarkTheme ? Color.FromArgb(38, 38, 38) : Color.White,
             Location = new Point(x, y),
+            Radius = 12,
             Size = new Size(width, 44),
         };
         var titleLabel = MakeCardLabel(label, 7.5F, FontStyle.Bold, TextMuted, 0, 5, width, 16);
@@ -803,6 +824,12 @@ public partial class Form1 : Form
             _ => (IsDarkTheme ? Color.FromArgb(24, 32, 42) : Color.FromArgb(241, 247, 252), AccentColor),
         };
         callQualityPanel.BackColor = panelColor;
+        callQualityPanel.FillColor = panelColor;
+        callQualityPanel.FillColor2 = IsDarkTheme
+            ? ControlPaint.Light(panelColor, 0.08f)
+            : ControlPaint.Light(panelColor, 0.35f);
+        callQualityPanel.BorderColor = BorderColor;
+        callQualityPanel.Invalidate();
         callQualityStatusLabel.ForeColor = statusColor;
         callQualityTitleLabel.ForeColor = TextMain;
         callQualityDetailLabel.ForeColor = TextMuted;
@@ -913,6 +940,10 @@ public partial class Form1 : Form
         ApplyButtonTheme(pinDeviceButton, false);
         ApplyButtonTheme(callQualitySettingsButton, false);
         ApplyButtonTheme(callQualityFixButton, true);
+        foreach (var button in new[] { refreshButton, sortButton, pinDeviceButton, callQualityFixButton, callQualitySettingsButton, transparencyButton, adaptiveButton, noiseCancelButton })
+        {
+            ApplyRoundedRegion(button, 14);
+        }
 
         pinnedOnlyCheckBox.ForeColor = TextMuted;
         ApplyCheckBoxTheme(pinnedOnlyCheckBox, PanelBack);
@@ -920,8 +951,11 @@ public partial class Form1 : Form
         ApplyCheckBoxTheme(callQualityGuardCheckBox, callQualityPanel.BackColor);
 
         leftBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(28, 28, 28) : Color.FromArgb(241, 250, 246);
+        ApplyModernPanelTheme(leftBatteryPanel, IsDarkTheme ? Color.FromArgb(28, 28, 28) : Color.FromArgb(245, 252, 249), IsDarkTheme ? Color.FromArgb(36, 36, 36) : Color.FromArgb(235, 247, 241));
         rightBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(32, 32, 32) : Color.FromArgb(241, 247, 252);
+        ApplyModernPanelTheme(rightBatteryPanel, IsDarkTheme ? Color.FromArgb(30, 30, 32) : Color.FromArgb(246, 250, 253), IsDarkTheme ? Color.FromArgb(38, 38, 40) : Color.FromArgb(235, 244, 251));
         caseBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(36, 36, 36) : Color.FromArgb(252, 248, 240);
+        ApplyModernPanelTheme(caseBatteryPanel, IsDarkTheme ? Color.FromArgb(34, 34, 34) : Color.FromArgb(253, 250, 245), IsDarkTheme ? Color.FromArgb(42, 42, 42) : Color.FromArgb(249, 242, 229));
     }
 
     private void ApplyButtonTheme(Button button, bool primary)
@@ -930,6 +964,30 @@ public partial class Form1 : Form
         button.ForeColor = primary ? AccentText : TextMain;
         button.FlatAppearance.BorderColor = BorderColor;
         button.UseVisualStyleBackColor = false;
+    }
+
+    private static void ApplyRoundedRegion(Control control, int radius)
+    {
+        if (control.Width <= 0 || control.Height <= 0)
+        {
+            return;
+        }
+
+        using var path = CreateRoundedRectanglePath(new Rectangle(0, 0, control.Width, control.Height), radius);
+        control.Region?.Dispose();
+        control.Region = new Region(path);
+    }
+
+    private static System.Drawing.Drawing2D.GraphicsPath CreateRoundedRectanglePath(Rectangle bounds, int radius)
+    {
+        var diameter = radius * 2;
+        var path = new System.Drawing.Drawing2D.GraphicsPath();
+        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
+        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     private void ApplyCheckBoxTheme(CheckBox checkBox, Color backColor)
@@ -942,6 +1000,14 @@ public partial class Form1 : Form
         checkBox.FlatAppearance.MouseDownBackColor = SoftBack;
         checkBox.FlatAppearance.MouseOverBackColor = SoftBack;
         checkBox.UseVisualStyleBackColor = false;
+    }
+
+    private void ApplyModernPanelTheme(ModernPanel panel, Color fill, Color fill2)
+    {
+        panel.FillColor = fill;
+        panel.FillColor2 = fill2;
+        panel.BorderColor = BorderColor;
+        panel.Invalidate();
     }
 
     private static IEnumerable<Label> AllLabels(Control root)
