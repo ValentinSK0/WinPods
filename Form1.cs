@@ -1599,9 +1599,17 @@ public partial class Form1 : Form
     private void StyleModeButton(Button button, AirPodsListeningMode mode, Color idleColor)
     {
         var active = currentListeningMode == mode;
-        button.BackColor = active ? AccentColor : IsDarkTheme ? SoftBack : idleColor;
-        button.ForeColor = active ? AccentText : TextMain;
+        var adaptiveGradient = active && mode == AirPodsListeningMode.Adaptive && button is AdaptiveModeButton;
+        if (button is AdaptiveModeButton adaptiveModeButton)
+        {
+            adaptiveModeButton.UseAdaptiveGradient = adaptiveGradient;
+            adaptiveModeButton.BorderColor = BorderColor;
+        }
+
+        button.BackColor = adaptiveGradient ? Color.Transparent : active ? AccentColor : IsDarkTheme ? SoftBack : idleColor;
+        button.ForeColor = adaptiveGradient ? Color.White : active ? AccentText : TextMain;
         PrepareRoundedButton(button);
+        button.Invalidate();
     }
 
     private static string DisplayMode(AirPodsListeningMode mode) =>

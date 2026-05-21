@@ -49,7 +49,7 @@ partial class Form1
     private Button pinDeviceButton;
     private TableLayoutPanel listeningModePanel;
     private Button transparencyButton;
-    private Button adaptiveButton;
+    private AdaptiveModeButton adaptiveButton;
     private Button noiseCancelButton;
     private Label listeningModeStatusLabel;
     private ModernPanel callQualityPanel;
@@ -147,7 +147,7 @@ partial class Form1
         pinDeviceButton = new Button();
         listeningModePanel = new TableLayoutPanel();
         transparencyButton = new Button();
-        adaptiveButton = new Button();
+        adaptiveButton = new AdaptiveModeButton();
         noiseCancelButton = new Button();
         listeningModeStatusLabel = new Label();
         callQualityPanel = new ModernPanel();
