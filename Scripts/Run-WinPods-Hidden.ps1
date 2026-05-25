@@ -1,6 +1,7 @@
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptRoot
 $projectPath = Join-Path $repoRoot "WinPods.csproj"
 $targetFramework = "net10.0-windows10.0.19041.0"
 $exePath = Join-Path $repoRoot "bin\Debug\$targetFramework\WinPods.exe"

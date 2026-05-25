@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-cd /d "%~dp0"
+cd /d "%~dp0.."
 
 where dotnet >nul 2>nul
 if errorlevel 1 (
@@ -10,4 +10,4 @@ if errorlevel 1 (
     exit /b 1
 )
 
-start "WinPods" /D "%~dp0" dotnet run --project "%~dp0WinPods.csproj"
+start "WinPods" /D "%CD%" dotnet run --project "%CD%\WinPods.csproj"

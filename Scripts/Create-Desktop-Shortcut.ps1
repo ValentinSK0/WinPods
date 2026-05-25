@@ -1,8 +1,9 @@
 $ErrorActionPreference = "Stop"
 
-$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = Split-Path -Parent $scriptRoot
 $shortcutPath = Join-Path ([Environment]::GetFolderPath("DesktopDirectory")) "WinPods.lnk"
-$runnerPath = Join-Path $repoRoot "Run-WinPods-Hidden.ps1"
+$runnerPath = Join-Path $scriptRoot "Run-WinPods-Hidden.ps1"
 $iconPath = Join-Path $repoRoot "Assets\WinPods.ico"
 
 if (-not (Test-Path $runnerPath)) {
