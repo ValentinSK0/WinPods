@@ -8,9 +8,12 @@ WinPods is a Windows tray app for Apple AirPods. It shows battery info, helps pi
 - AirPods/Beats scanner
 - Merged device list for earbuds/case/rotating BLE addresses
 - Highlights the AirPods currently connected in Windows Bluetooth
+- Pin your own AirPods and optionally hide nearby foreign AirPods
 - Left, right, and case battery display
 - Exact 1% battery when MagicAAP driver is available
 - BLE battery fallback when only advertisements are available
+- Modern light/dark UI with saved theme
+- Saved window size, position, splitter layout, and pinned-device filter
 - Listening mode controls:
   - Transparency
   - Adaptive
@@ -21,8 +24,10 @@ WinPods is a Windows tray app for Apple AirPods. It shows battery info, helps pi
   - Can route output to AirPods stereo and mic to a non-AirPods microphone
   - Tray menu controls and Sound settings shortcut
 - Sortable device list
-- Refresh button
+- Start/stop scan button
+- Auto-pauses scanning after AirPods are connected and the app is in tray
 - Hide-to-tray behavior
+- Hidden desktop launcher with app icon
 
 ## Requirements
 
@@ -78,12 +83,26 @@ Run:
 dotnet run
 ```
 
+Or run the helper script:
+
+```powershell
+.\Scripts\Run-WinPods-Hidden.ps1
+```
+
 Or build:
 
 ```powershell
 dotnet build
 .\bin\Debug\net10.0-windows10.0.19041.0\WinPods.exe
 ```
+
+Create or refresh the desktop shortcut:
+
+```powershell
+.\Scripts\Create-Desktop-Shortcut.ps1
+```
+
+The shortcut runs WinPods without showing a console window.
 
 ## How To Use
 
@@ -92,9 +111,21 @@ dotnet build
 3. Connect AirPods in Windows Bluetooth.
 4. Start WinPods.
 5. Pick your AirPods from the device list.
-6. Use Refresh if the list is stale.
-7. Use Listening mode buttons for Transparency, Adaptive, or Noise Cancellation.
-8. Close the window to keep WinPods running in tray.
+6. Use Pin as mine to prioritize your AirPods.
+7. Enable Only my AirPods if you want to ignore nearby foreign AirPods.
+8. Use Start scan or Stop scan to control scanning.
+9. Use Listening mode buttons for Transparency, Adaptive, or Noise Cancellation.
+10. Close the window to keep WinPods running in tray.
+
+When your AirPods are connected and WinPods is hidden in tray, scanning auto-pauses after about 30 seconds. Opening the window starts scanning again.
+
+WinPods stores local app preferences in:
+
+```text
+%LOCALAPPDATA%\WinPods\settings.json
+```
+
+Saved preferences include window layout, main splitter position, dark theme, pinned AirPods, pinned-only filter, and Call Quality Guard settings.
 
 ## Battery Notes
 
@@ -131,6 +162,32 @@ pnputil /enum-drivers | Select-String -Pattern "magicaap|Maslov" -Context 0,6
 5. Restart Windows if the driver was installed recently.
 
 If Windows Defender blocked the driver during install, allow it in Windows Security and run the MagicAAP install command again.
+
+If the desktop shortcut does not start WinPods, recreate it:
+
+```powershell
+.\Scripts\Create-Desktop-Shortcut.ps1
+```
+
+The shortcut should point to:
+
+```text
+Scripts\Run-WinPods-Hidden.ps1
+```
+
+## Project Structure
+
+```text
+AirPods\    AirPods AAP protocol, battery decoding, models
+App\        Application entry point
+Audio\      Windows audio endpoints and Call Quality Guard
+Bluetooth\  BLE scanning, L2CAP socket, connected Bluetooth devices
+Interop\    MagicAAP driver connection
+Scripts\    Desktop shortcut and launcher scripts
+Settings\   Local settings persistence
+UI\         WinForms UI, theme controls, custom panels, tray icon
+Assets\     App icon and visual assets
+```
 
 ## Project Status
 
