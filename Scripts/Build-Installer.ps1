@@ -14,6 +14,7 @@ $publishScript = Join-Path $scriptRoot "Publish-Release.ps1"
 $installerScript = Join-Path $repoRoot "Installer\WinPods.iss"
 $publishDir = Join-Path (Join-Path $repoRoot "publish") $Runtime
 $distDir = Join-Path $repoRoot "dist"
+$publishedExePath = Join-Path $publishDir "WinPods.exe"
 
 function Get-ProjectVersion {
     param([string]$Path)
@@ -79,6 +80,14 @@ $iscc = Find-InnoCompiler -ExplicitPath $InnoCompilerPath
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
 $outputBaseName = "WinPodsSetup-$Version"
+$portablePath = Join-Path $distDir "WinPods-$Version-portable.exe"
+
+if (-not (Test-Path $publishedExePath)) {
+    throw "Published executable not found: $publishedExePath"
+}
+
+Copy-Item -LiteralPath $publishedExePath -Destination $portablePath -Force
+Write-Host "Built portable app: $portablePath"
 
 & $iscc $installerScript `
     "/DAppVersion=$Version" `

@@ -1,99 +1,71 @@
 # WinPods
 
-WinPods is a Windows tray app for Apple AirPods. It shows battery info, helps pick the correct AirPods in busy Bluetooth areas, and can switch AirPods Pro listening modes from Windows.
+<p align="center">
+  <img src="Assets/winpods-hero.svg" alt="WinPods animated AirPods control banner" width="920">
+</p>
 
-## Features
+WinPods is a Windows tray app for AirPods and Beats. It shows battery, helps you keep your own AirPods pinned in busy Bluetooth areas, controls AirPods Pro listening modes, and protects call audio from Windows Bluetooth headset downgrade.
 
-- Windows tray icon
-- AirPods/Beats scanner
-- Merged device list for earbuds/case/rotating BLE addresses
-- Highlights the AirPods currently connected in Windows Bluetooth
-- Pin your own AirPods and optionally hide nearby foreign AirPods
-- Left, right, and case battery display
-- Exact 1% battery when MagicAAP driver is available
-- BLE battery fallback when only advertisements are available
-- Modern light/dark UI with saved theme
-- Saved window size, position, splitter layout, and pinned-device filter
-- Listening mode controls:
-  - Transparency
-  - Adaptive
-  - Noise Cancellation
-- Call Quality Guard:
-  - Detects AirPods/Beats Hands-Free call audio risk on Windows
-  - Warns when AirPods mic can force low-quality headset audio
-  - Can route output to AirPods stereo and mic to a non-AirPods microphone
-  - Tray menu controls and Sound settings shortcut
-- Sortable device list
-- Start/stop scan button
-- Auto-pauses scanning after AirPods are connected and the app is in tray
-- Hide-to-tray behavior
-- Hidden desktop launcher with app icon
+## Quick Start
 
-## Requirements
+1. Download the latest installer from [Releases](https://github.com/ValentinSK0/WinPods/releases).
+2. Install the MagicAAP driver if you want AirPods controls to work.
+3. Connect AirPods in Windows Bluetooth.
+4. Start WinPods, select your AirPods, then click **Pin as mine**.
+5. Close the window when done. WinPods keeps running in tray.
 
-- Windows 10 2004 or newer, or Windows 11
-- Bluetooth adapter
-- .NET 10 SDK to run from source
-- MagicAAP driver for exact battery and listening mode control
+## What It Solves
 
-## Install MagicAAP Driver
+- Shows AirPods battery on Windows, including left/right/case when available.
+- Filters out nearby AirPods so your own pair stays easy to find.
+- Switches AirPods Pro modes: Transparency, Adaptive, Noise Cancellation.
+- Warns when calls may force low-quality AirPods Hands-Free audio.
+- Helps route calls to AirPods stereo output plus a non-AirPods microphone.
+- Runs quietly in tray with saved layout, theme, pinned AirPods, and scan state.
 
-WinPods uses the MagicAAP driver for AirPods control commands on Windows. Without this driver, Windows Bluetooth audio still works, but exact battery and listening mode switching may not work.
+## Main Features
 
-Driver source:
+- AirPods and Beats scanner
+- Pinned AirPods and **Only my AirPods** filter
+- Basic battery display, plus AirPods controls when MagicAAP is installed
+- Modern light/dark UI
+- Saved window layout and settings
+- Tray menu controls
+- Start/stop scan with auto-pause in tray
+- Hidden desktop launcher without console window
+- Installer and portable release build scripts
+
+## MagicAAP Driver
+
+MagicAAP is required for AirPods control.
+
+Without MagicAAP, WinPods can only show basic scanned battery information. Listening mode controls and other AirPods commands need the MagicAAP driver.
+
+Install MagicAAP by following the current official MagicPods documentation. The install flow can change, so use the latest instructions from:
+
 - [MagicAAP driver page](https://magicpods.app/magicaap/)
-- [Official MagicAAP install docs](https://help.magicpods.app/fun-magicaap-community/)
+- [MagicAAP install docs](https://help.magicpods.app/fun-magicaap-community/)
 
-Open PowerShell as Administrator and run:
-
-```powershell
-irm "https://magicpods.app/utils/magicaap-community-v1.ps1" | iex
-```
-
-Choose install in the opened script window.
-
-Windows Defender may warn or block the driver because it is a community driver. If Defender blocks it, allow it in Windows Security, then run the same install command again:
-
-```powershell
-irm "https://magicpods.app/utils/magicaap-community-v1.ps1" | iex
-```
-
-Restart Windows after the driver installs.
-
-You can verify the driver with:
+Verify:
 
 ```powershell
 pnputil /enum-drivers | Select-String -Pattern "magicaap|Maslov" -Context 0,6
 ```
 
-Expected result should include `magicaap.inf` and `MagicAAP`.
+Expected result includes `magicaap.inf` and `MagicAAP`.
 
 ## Run From Source
 
-Clone the repo:
+Requirements:
+
+- Windows 10 2004 or newer, or Windows 11
+- Bluetooth adapter
+- .NET 10 SDK
 
 ```powershell
 git clone https://github.com/ValentinSK0/WinPods.git
 cd WinPods
-```
-
-Run:
-
-```powershell
 dotnet run
-```
-
-Or run the helper script:
-
-```powershell
-.\Scripts\Run-WinPods-Hidden.ps1
-```
-
-Or build:
-
-```powershell
-dotnet build
-.\bin\Debug\net10.0-windows10.0.19041.0\WinPods.exe
 ```
 
 Create or refresh the desktop shortcut:
@@ -102,9 +74,9 @@ Create or refresh the desktop shortcut:
 .\Scripts\Create-Desktop-Shortcut.ps1
 ```
 
-The shortcut runs WinPods without showing a console window.
+The shortcut starts WinPods without a visible console window.
 
-## Build Installer
+## Build Release
 
 Install [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run:
 
@@ -112,105 +84,57 @@ Install [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run:
 .\Scripts\Build-Installer.ps1
 ```
 
-The script reads the app version from `WinPods.csproj`, publishes a self-contained `win-x64` build, and creates:
+Outputs:
 
 ```text
 dist\WinPodsSetup-0.2.0.exe
+dist\WinPods-0.2.0-portable.exe
 ```
 
-To override the version for one build:
+The version is read from `WinPods.csproj`. Override it for one build:
 
 ```powershell
 .\Scripts\Build-Installer.ps1 -Version 0.2.1
 ```
 
-Build outputs in `publish\` and `dist\` are ignored by git. Upload the generated setup file to GitHub Releases, not to normal source commits.
+## Notes
 
-## How To Use
+Windows Bluetooth cannot normally use high-quality AirPods stereo audio and the AirPods microphone at the same time. Call Quality Guard watches for that risk and can help switch calls to AirPods stereo output plus a laptop, webcam, USB, or other non-AirPods microphone.
 
-1. Install MagicAAP driver.
-2. Restart Windows.
-3. Connect AirPods in Windows Bluetooth.
-4. Start WinPods.
-5. Pick your AirPods from the device list.
-6. Use Pin as mine to prioritize your AirPods.
-7. Enable Only my AirPods if you want to ignore nearby foreign AirPods.
-8. Use Start scan or Stop scan to control scanning.
-9. Use Listening mode buttons for Transparency, Adaptive, or Noise Cancellation.
-10. Close the window to keep WinPods running in tray.
-
-When your AirPods are connected and WinPods is hidden in tray, scanning auto-pauses after about 30 seconds. Opening the window starts scanning again.
-
-WinPods stores local app preferences in:
+Settings are stored locally:
 
 ```text
 %LOCALAPPDATA%\WinPods\settings.json
 ```
 
-Saved preferences include window layout, main splitter position, dark theme, pinned AirPods, pinned-only filter, and Call Quality Guard settings.
-
-## Battery Notes
-
-AirPods BLE advertisements usually expose battery in 10% steps. WinPods uses that as fallback.
-
-When MagicAAP is working, WinPods reads AirPods battery notifications over AAP and can show exact 1% values for left, right, and case.
-
-Case battery may appear only when the case is open or when at least one earbud is inside.
-
-## Call Quality Guard Notes
-
-Windows Bluetooth normally cannot use AirPods high-quality stereo audio and the AirPods microphone at the same time. If an app selects the AirPods Hands-Free microphone, Windows may switch audio to the low-quality headset profile.
-
-Call Quality Guard monitors the default Windows communication audio devices. When it sees AirPods/Beats Hands-Free risk, it warns in the app and tray. The Fix route action tries to set:
-
-- output: AirPods stereo endpoint
-- microphone: laptop, webcam, USB, or other non-AirPods microphone
-
-If Windows blocks automatic routing or no safe microphone is available, open Sound settings from WinPods and set those devices manually.
-
 ## Troubleshooting
 
-If listening mode does not switch:
+If listening modes or AirPods controls do not work:
 
 1. Confirm AirPods are connected in Windows Bluetooth.
-2. Confirm MagicAAP is installed:
-
-```powershell
-pnputil /enum-drivers | Select-String -Pattern "magicaap|Maslov" -Context 0,6
-```
-
+2. Confirm MagicAAP is installed with the verify command above.
 3. Reconnect AirPods.
 4. Restart WinPods.
-5. Restart Windows if the driver was installed recently.
+5. Follow the latest MagicAAP documentation if the driver still is not detected.
 
-If Windows Defender blocked the driver during install, allow it in Windows Security and run the MagicAAP install command again.
+If Windows Defender blocked MagicAAP, allow it in Windows Security and run the install command again.
 
-If the desktop shortcut does not start WinPods, recreate it:
+If the desktop shortcut has an old icon or does not start WinPods, recreate it:
 
 ```powershell
 .\Scripts\Create-Desktop-Shortcut.ps1
 ```
 
-The shortcut should point to:
-
-```text
-Scripts\Run-WinPods-Hidden.ps1
-```
-
 ## Project Structure
 
 ```text
-AirPods\    AirPods AAP protocol, battery decoding, models
+AirPods\    AAP protocol, battery decoding, AirPods models
 App\        Application entry point
 Audio\      Windows audio endpoints and Call Quality Guard
-Bluetooth\  BLE scanning, L2CAP socket, connected Bluetooth devices
+Bluetooth\  BLE scanning and connected Bluetooth devices
 Interop\    MagicAAP driver connection
-Scripts\    Desktop shortcut and launcher scripts
+Scripts\    Launcher, shortcut, publish, installer scripts
 Settings\   Local settings persistence
-UI\         WinForms UI, theme controls, custom panels, tray icon
-Assets\     App icon and visual assets
+UI\         WinForms UI, theme controls, tray icon
+Assets\     App icons and README visuals
 ```
-
-## Project Status
-
-Early Windows utility. Built with WinForms and MagicAAP driver support.
