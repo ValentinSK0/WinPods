@@ -8,6 +8,7 @@ public partial class Form1 : Form
     private readonly BluetoothAirPodsScanner scanner = new();
     private readonly AirPodsAapClient aapClient = new();
     private readonly CallQualityGuard callQualityGuard = new();
+    private readonly SystemHealthChecker systemHealthChecker = new();
     private readonly WinPodsSettings settings = WinPodsSettings.Load();
     private readonly Dictionary<string, AirPodsReading> readingsByAddress = new(StringComparer.OrdinalIgnoreCase);
     private readonly System.Windows.Forms.Timer connectedRefreshTimer = new();
@@ -15,6 +16,7 @@ public partial class Form1 : Form
     private readonly System.Windows.Forms.Timer autoScanPauseTimer = new();
     private IReadOnlyList<ConnectedBluetoothDevice> connectedBluetoothDevices = Array.Empty<ConnectedBluetoothDevice>();
     private CallQualityGuardSnapshot callQualitySnapshot = CallQualityGuardSnapshot.Disabled();
+    private SystemHealthSnapshot systemHealthSnapshot = SystemHealthSnapshot.Checking();
     private AirPodsReading? latestReading;
     private AirPodsListeningMode? currentListeningMode;
     private string? selectedAddress;
@@ -28,6 +30,7 @@ public partial class Form1 : Form
     private bool scanAutoPausedInTray;
     private bool callQualityFixRunning;
     private bool callQualityCheckRunning;
+    private bool systemHealthCheckRunning;
     private bool syncingCallQualityEnabled;
     private bool syncingPinnedOnly;
     private bool syncingTheme;
@@ -58,7 +61,9 @@ public partial class Form1 : Form
         UpdateListeningModeUi();
         UpdateSortButtonText();
         ApplyTheme();
+        ApplySystemHealthSnapshot(systemHealthSnapshot);
         QueueCallQualityGuardRefresh();
+        QueueSystemHealthRefresh(showDialog: false);
     }
 
     protected override void OnShown(EventArgs e)
@@ -78,6 +83,7 @@ public partial class Form1 : Form
             callQualityGuardTimer.Start();
             autoScanPauseTimer.Start();
             _ = RefreshConnectedDevicesAsync();
+            QueueSystemHealthRefresh(showDialog: false);
         }
     }
 
@@ -712,6 +718,102 @@ public partial class Form1 : Form
     private void callQualitySettingsButton_Click(object sender, EventArgs e)
         => OpenSoundSettings();
 
+    private void systemHealthCheckButton_Click(object sender, EventArgs e)
+        => QueueSystemHealthRefresh(showDialog: true);
+
+    private void QueueSystemHealthRefresh(bool showDialog)
+    {
+        if (systemHealthCheckRunning)
+        {
+            if (showDialog)
+            {
+                using var dialog = new HealthDialog(systemHealthSnapshot, IsDarkTheme);
+                dialog.ShowDialog(this);
+            }
+
+            return;
+        }
+
+        _ = RefreshSystemHealthAsync(showDialog);
+    }
+
+    private async Task RefreshSystemHealthAsync(bool showDialog)
+    {
+        systemHealthCheckRunning = true;
+        systemHealthCheckButton.Enabled = false;
+        systemHealthCheckButton.Text = "Checking...";
+        ApplySystemHealthSnapshot(SystemHealthSnapshot.Checking());
+
+        try
+        {
+            var snapshot = await systemHealthChecker.CheckAsync();
+            RunOnUiThread(() =>
+            {
+                systemHealthSnapshot = snapshot;
+                ApplySystemHealthSnapshot(snapshot);
+
+                if (showDialog && !IsDisposed)
+                {
+                    using var dialog = new HealthDialog(snapshot, IsDarkTheme);
+                    dialog.ShowDialog(this);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            var snapshot = new SystemHealthSnapshot(
+                DateTimeOffset.Now,
+                new[]
+                {
+                    new SystemHealthItem(
+                        "System health",
+                        SystemHealthStatus.Error,
+                        "Check failed",
+                        ex.Message),
+                });
+
+            RunOnUiThread(() =>
+            {
+                systemHealthSnapshot = snapshot;
+                ApplySystemHealthSnapshot(snapshot);
+            });
+        }
+        finally
+        {
+            RunOnUiThread(() =>
+            {
+                systemHealthCheckRunning = false;
+                systemHealthCheckButton.Enabled = true;
+                systemHealthCheckButton.Text = "Check setup";
+            });
+        }
+    }
+
+    private void ApplySystemHealthSnapshot(SystemHealthSnapshot snapshot)
+    {
+        var status = snapshot.OverallStatus;
+        var primaryIssue = snapshot.Items.FirstOrDefault(static item => item.Status != SystemHealthStatus.Ok)
+            ?? snapshot.Items.FirstOrDefault();
+
+        systemHealthStatusLabel.Text = snapshot.Summary;
+        systemHealthStatusLabel.ForeColor = HealthStatusColor(status);
+        systemHealthDetailLabel.Text = primaryIssue is null
+            ? "Driver, Bluetooth, audio, settings."
+            : $"{primaryIssue.Name}: {primaryIssue.Summary}. {primaryIssue.Detail}";
+
+        var fill = status switch
+        {
+            SystemHealthStatus.Ok => IsDarkTheme ? Color.FromArgb(24, 36, 30) : Color.FromArgb(246, 252, 249),
+            SystemHealthStatus.Warning => IsDarkTheme ? Color.FromArgb(42, 34, 20) : Color.FromArgb(255, 250, 238),
+            _ => IsDarkTheme ? Color.FromArgb(44, 25, 25) : Color.FromArgb(255, 246, 246),
+        };
+
+        ApplyModernPanelTheme(systemHealthPanel, fill, fill);
+        systemHealthCheckButton.BackColor = IsDarkTheme ? Color.FromArgb(38, 38, 38) : Color.White;
+        systemHealthCheckButton.ForeColor = TextMain;
+        PrepareRoundedButton(systemHealthCheckButton);
+    }
+
     private void SetCallQualityGuardEnabled(bool enabled)
     {
         settings.CallQualityGuardEnabled = enabled;
@@ -939,9 +1041,10 @@ public partial class Form1 : Form
 
         ApplyButtonTheme(sortButton, false);
         ApplyButtonTheme(pinDeviceButton, false);
+        ApplyButtonTheme(systemHealthCheckButton, false);
         ApplyButtonTheme(callQualitySettingsButton, false);
         ApplyButtonTheme(callQualityFixButton, true);
-        foreach (var button in new[] { refreshButton, sortButton, pinDeviceButton, callQualityFixButton, callQualitySettingsButton, transparencyButton, adaptiveButton, noiseCancelButton })
+        foreach (var button in new[] { refreshButton, sortButton, pinDeviceButton, systemHealthCheckButton, callQualityFixButton, callQualitySettingsButton, transparencyButton, adaptiveButton, noiseCancelButton })
         {
             ApplyRoundedRegion(button, 14);
         }
@@ -957,6 +1060,7 @@ public partial class Form1 : Form
         ApplyModernPanelTheme(rightBatteryPanel, IsDarkTheme ? Color.FromArgb(30, 30, 32) : Color.FromArgb(246, 250, 253), IsDarkTheme ? Color.FromArgb(30, 30, 32) : Color.FromArgb(235, 244, 251));
         caseBatteryPanel.BackColor = IsDarkTheme ? Color.FromArgb(36, 36, 36) : Color.FromArgb(252, 248, 240);
         ApplyModernPanelTheme(caseBatteryPanel, IsDarkTheme ? Color.FromArgb(34, 34, 34) : Color.FromArgb(253, 250, 245), IsDarkTheme ? Color.FromArgb(34, 34, 34) : Color.FromArgb(249, 242, 229));
+        ApplySystemHealthSnapshot(systemHealthSnapshot);
     }
 
     private void ApplyButtonTheme(Button button, bool primary)
@@ -979,7 +1083,7 @@ public partial class Form1 : Form
 
     private void RefreshRoundedButtonRegions()
     {
-        foreach (var button in new[] { refreshButton, sortButton, pinDeviceButton, callQualityFixButton, callQualitySettingsButton, transparencyButton, adaptiveButton, noiseCancelButton })
+        foreach (var button in new[] { refreshButton, sortButton, pinDeviceButton, systemHealthCheckButton, callQualityFixButton, callQualitySettingsButton, transparencyButton, adaptiveButton, noiseCancelButton })
         {
             PrepareRoundedButton(button);
         }
@@ -1029,6 +1133,14 @@ public partial class Form1 : Form
         panel.BorderColor = BorderColor;
         panel.Invalidate();
     }
+
+    private static Color HealthStatusColor(SystemHealthStatus status) =>
+        status switch
+        {
+            SystemHealthStatus.Ok => Color.FromArgb(36, 150, 92),
+            SystemHealthStatus.Warning => Color.FromArgb(202, 133, 24),
+            _ => Color.FromArgb(210, 70, 60),
+        };
 
     private static IEnumerable<Label> AllLabels(Control root)
     {

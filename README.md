@@ -104,6 +104,28 @@ Create or refresh the desktop shortcut:
 
 The shortcut runs WinPods without showing a console window.
 
+## Build Installer
+
+Install [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run:
+
+```powershell
+.\Scripts\Build-Installer.ps1
+```
+
+The script reads the app version from `WinPods.csproj`, publishes a self-contained `win-x64` build, and creates:
+
+```text
+dist\WinPodsSetup-0.2.0.exe
+```
+
+To override the version for one build:
+
+```powershell
+.\Scripts\Build-Installer.ps1 -Version 0.2.1
+```
+
+Build outputs in `publish\` and `dist\` are ignored by git. Upload the generated setup file to GitHub Releases, not to normal source commits.
+
 ## How To Use
 
 1. Install MagicAAP driver.

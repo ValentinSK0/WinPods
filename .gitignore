@@ -8,3 +8,6 @@ obj/
 TestResults/
 *.nupkg
 .research/
+publish/
+dist/
+Installer/Output/
